@@ -81,8 +81,10 @@ publish, configure package visibility in GitHub. If a package remains private,
 create an image pull secret and pass it through the service chart's
 `imagePullSecrets` value.
 
-The scheduled cleanup workflow removes package versions older than seven days,
-keeping the newest two versions of every service image and Helm chart.
+The scheduled cleanup workflow removes versions older than seven days and keeps
+up to eight retained versions for every service image and Helm chart: the seven
+newest eligible immutable versions plus the protected `latest` tag. Newer
+versions are retained until they become eligible for cleanup.
 
 Each service chart is published alongside its image as an OCI artifact:
 

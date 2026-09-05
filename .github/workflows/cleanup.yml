@@ -26,12 +26,12 @@ jobs:
           - charts/occupancy-monitor
           - charts/sensors-data-collector
     steps:
-      - name: Delete older package versions
+      - name: Enforce package version limit
         uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ matrix.package }}
           package-type: 'container'
-          min-versions-to-keep: 2
+          min-versions-to-keep: 7
           ignore-versions: 'latest'
           delete-only-package-versions: 'true'
           created-before-days: 7
