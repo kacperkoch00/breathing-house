@@ -68,6 +68,13 @@ images:
 	done
 
 build:
+	@if test "$(SERVICE)" = "all"; then \
+		for service in $(SERVICES); do \
+			echo "==> building $$service"; \
+			$(MAKE) build SERVICE=$$service IMAGE=$$service:dev; \
+		done; \
+		exit 0; \
+	fi
 	@case "$(SERVICE)" in \
 		environment-monitor|occupancy-monitor) \
 			$(MAKE) generate-service; \
@@ -85,7 +92,7 @@ build:
 			helm lint $(CHART_DIR); \
 			$(MAKE) helm-package SERVICE=$(SERVICE); \
 			docker build -t $(IMAGE) $(SERVICE_DIR);; \
-		*) echo "Unknown SERVICE='$(SERVICE)'. Choose one of: $(SERVICES)"; exit 1;; \
+		*) echo "Unknown SERVICE='$(SERVICE)'. Choose one of: $(SERVICES) all"; exit 1;; \
 	esac
 
 build-all: generate test helm-lint helm-package-all images
@@ -116,9 +123,23 @@ k8s-stop:
 	minikube stop
 
 k8s-load:
+	@if test "$(SERVICE)" = "all"; then \
+		for service in $(SERVICES); do \
+			echo "==> loading image for $$service"; \
+			$(MAKE) k8s-load SERVICE=$$service IMAGE=$$service:dev; \
+		done; \
+		exit 0; \
+	fi
 	minikube image load $(IMAGE)
 
 k8s-deploy:
+	@if test "$(SERVICE)" = "all"; then \
+		for service in $(SERVICES); do \
+			echo "==> deploying $$service"; \
+			$(MAKE) k8s-deploy SERVICE=$$service K8S_RELEASE=$$service; \
+		done; \
+		exit 0; \
+	fi
 	helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
 		--set image.repository=$(SERVICE) \
 		--set image.tag=dev \

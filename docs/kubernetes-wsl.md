@@ -63,12 +63,16 @@ than using port-forwarding.
 ## Build and deploy a service
 
 Build the image, load it into Minikube, and install the service chart with
-Ingress enabled:
+Ingress enabled. Use a specific service or run the same flow for all services:
 
 ```bash
 make build SERVICE=environment-monitor
 make k8s-load SERVICE=environment-monitor
 make k8s-deploy SERVICE=environment-monitor
+
+make build SERVICE=all
+make k8s-load SERVICE=all
+make k8s-deploy SERVICE=all
 ```
 
 For a registry image published by GitHub Actions, deploy with:
