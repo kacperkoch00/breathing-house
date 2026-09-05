@@ -38,8 +38,27 @@ jobs:
       - name: Install NGINX Ingress controller
         run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 
-      - name: Wait for NGINX Ingress controller
-        run: kubectl wait --namespace ingress-nginx --for=condition=Ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
+      - name: Wait for NGINX Ingress controller and admission webhook
+        run: |
+          kubectl rollout status deployment/ingress-nginx-controller \
+            --namespace ingress-nginx \
+            --timeout=180s
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=complete job/ingress-nginx-admission-create \
+            --timeout=180s
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=complete job/ingress-nginx-admission-patch \
+            --timeout=180s
+          for attempt in $(seq 1 60); do
+            if kubectl get endpoints ingress-nginx-controller-admission \
+              --namespace ingress-nginx \
+              -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null | grep -q .; then
+              break
+            fi
+            sleep 3
+          done
+          kubectl get endpoints ingress-nginx-controller-admission \
+            --namespace ingress-nginx
 
       - name: Build service image for pull request
         if: ${{ !inputs.publish-oci }}
