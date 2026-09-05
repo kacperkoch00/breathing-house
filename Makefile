@@ -3,7 +3,8 @@
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
 CHART_DIR ?= deploy/helm/$(SERVICE)
-IMAGE ?= $(SERVICE):dev
+IMAGE ?= localhost/$(SERVICE):dev
+IMAGE_REPOSITORY ?= localhost/$(SERVICE)
 OPENAPI_SERVICES ?= environment-monitor occupancy-monitor
 JAVA_SERVICES := alert-notifier sensors-data-collector
 IMAGE_SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
@@ -71,29 +72,29 @@ build:
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> building $$service"; \
-			$(MAKE) build SERVICE=$$service IMAGE=$$service:dev; \
+			$(MAKE) build SERVICE=$$service IMAGE=localhost/$$service:dev; \
 		done; \
-		exit 0; \
+	else \
+		case "$(SERVICE)" in \
+			environment-monitor|occupancy-monitor) \
+				$(MAKE) generate-service; \
+				$(MAKE) -C $(SERVICE_DIR) test; \
+				helm lint $(CHART_DIR); \
+				$(MAKE) helm-package SERVICE=$(SERVICE); \
+				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+			alert-notifier|sensors-data-collector) \
+				(cd $(SERVICE_DIR) && mvn -B test package); \
+				helm lint $(CHART_DIR); \
+				$(MAKE) helm-package SERVICE=$(SERVICE); \
+				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+			home-dashboard) \
+				(cd $(SERVICE_DIR) && npm install && npm run build); \
+				helm lint $(CHART_DIR); \
+				$(MAKE) helm-package SERVICE=$(SERVICE); \
+				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+			*) echo "Unknown SERVICE='$(SERVICE)'. Choose one of: $(SERVICES) all"; exit 1;; \
+		esac; \
 	fi
-	@case "$(SERVICE)" in \
-		environment-monitor|occupancy-monitor) \
-			$(MAKE) generate-service; \
-			$(MAKE) -C $(SERVICE_DIR) test; \
-			helm lint $(CHART_DIR); \
-			$(MAKE) helm-package SERVICE=$(SERVICE); \
-			docker build -t $(IMAGE) $(SERVICE_DIR);; \
-		alert-notifier|sensors-data-collector) \
-			(cd $(SERVICE_DIR) && mvn -B test package); \
-			helm lint $(CHART_DIR); \
-			$(MAKE) helm-package SERVICE=$(SERVICE); \
-			docker build -t $(IMAGE) $(SERVICE_DIR);; \
-		home-dashboard) \
-			(cd $(SERVICE_DIR) && npm install && npm run build); \
-			helm lint $(CHART_DIR); \
-			$(MAKE) helm-package SERVICE=$(SERVICE); \
-			docker build -t $(IMAGE) $(SERVICE_DIR);; \
-		*) echo "Unknown SERVICE='$(SERVICE)'. Choose one of: $(SERVICES) all"; exit 1;; \
-	esac
 
 build-all: generate test helm-lint helm-package-all images
 
@@ -126,22 +127,30 @@ k8s-load:
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> loading image for $$service"; \
-			$(MAKE) k8s-load SERVICE=$$service IMAGE=$$service:dev; \
+			$(MAKE) k8s-load SERVICE=$$service IMAGE=localhost/$$service:dev; \
 		done; \
-		exit 0; \
+	else \
+		if podman image exists "$(IMAGE)" 2>/dev/null; then \
+			podman save -o /tmp/$(SERVICE).tar "$(IMAGE)"; \
+			minikube image load /tmp/$(SERVICE).tar; \
+			rm -f /tmp/$(SERVICE).tar; \
+		else \
+			echo "Image '$(IMAGE)' not found locally; run 'make build SERVICE=$(SERVICE)' first."; \
+			exit 1; \
+		fi; \
 	fi
-	minikube image load $(IMAGE)
 
 k8s-deploy:
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> deploying $$service"; \
-			$(MAKE) k8s-deploy SERVICE=$$service K8S_RELEASE=$$service; \
+			$(MAKE) k8s-deploy SERVICE=$$service K8S_RELEASE=$$service IMAGE_REPOSITORY=localhost/$$service; \
 		done; \
-		exit 0; \
+	else \
+		helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
+			--set fullnameOverride=$(SERVICE) \
+			--set image.repository=$(IMAGE_REPOSITORY) \
+			--set image.tag=dev \
+			--set image.pullPolicy=IfNotPresent \
+			--set ingress.enabled=true; \
 	fi
-	helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
-		--set image.repository=$(SERVICE) \
-		--set image.tag=dev \
-		--set image.pullPolicy=IfNotPresent \
-		--set ingress.enabled=true
