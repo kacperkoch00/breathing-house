@@ -12,11 +12,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/environ
 
 FROM docker.io/library/alpine:3.22
 
-RUN addgroup -S app && adduser -S -G app app
+RUN addgroup -S -g 10001 app && adduser -S -D -u 10001 -G app app
 
 COPY --from=build /out/environment-monitor /usr/local/bin/environment-monitor
 
-USER app
+USER 10001:10001
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/environment-monitor"]
