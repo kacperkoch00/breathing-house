@@ -229,6 +229,11 @@ manually from GitHub Actions. It installs all five services into Kind, runs the
 Robot Framework suite under `tests/robot`, and uploads the Robot report and
 Kubernetes diagnostics as the `night-regression-results-<run-number>` artifact.
 
+The biweekly release workflow runs at midnight UTC every 14 days on Mondays and
+can also be started manually from GitHub Actions. It creates a dated GitHub
+Release from the current `main` commit when commits exist since the previous
+release, and generates release notes from merged changes.
+
 For a local Kubernetes cluster on WSL, see
 [docs/kubernetes-wsl.md](docs/kubernetes-wsl.md). The short workflow is:
 

@@ -1,0 +1,72 @@
+name: Biweekly release
+
+on:
+  schedule:
+    # The job runs weekly, then the guard below keeps releases on a 14-day cadence.
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check biweekly schedule
+        if: github.event_name == 'schedule'
+        run: |
+          anchor_day=$(( $(date -u -d '2026-01-05' +%s) / 86400 ))
+          current_day=$(( $(date -u +%s) / 86400 ))
+          if (( (current_day - anchor_day) % 14 != 0 )); then
+            echo "Skipping release; today is outside the 14-day release cadence."
+            echo "skip=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check for changes since latest release
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest_tag=$(gh release list \
+            --limit 1 \
+            --exclude-drafts \
+            --exclude-pre-releases \
+            --json tagName \
+            --jq '.[0].tagName // ""')
+
+          if [[ -z "$latest_tag" ]]; then
+            echo "No previous release found; creating the first release."
+            exit 0
+          fi
+
+          commits_since_release=$(git rev-list --count "$latest_tag..$GITHUB_SHA")
+          if (( commits_since_release == 0 )); then
+            echo "No commits found since release $latest_tag."
+            echo "skip=true" >> "$GITHUB_ENV"
+          else
+            echo "$commits_since_release commit(s) found since release $latest_tag."
+          fi
+
+      - name: Set release metadata
+        if: env.skip != 'true'
+        run: |
+          release_tag="v$(date -u +%Y.%m.%d)"
+          echo "release_tag=$release_tag" >> "$GITHUB_ENV"
+          echo "release_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$release_tag" \
+            --target "$GITHUB_SHA" \
+            --title "Release $release_tag" \
+            --generate-notes \
+            --notes "Automated biweekly release created on $release_date."
