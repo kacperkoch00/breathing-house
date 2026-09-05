@@ -112,6 +112,15 @@ jobs:
         if: inputs.publish-oci
         run: echo "${{ github.token }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
+      - name: Create GHCR pull secret for published image
+        if: inputs.publish-oci
+        run: |
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ github.token }}" \
+            --docker-email="${{ github.actor }}@users.noreply.github.com"
+
       - name: Install published OCI chart with Ingress
         if: inputs.publish-oci
         run: |
@@ -119,8 +128,9 @@ jobs:
             oci://ghcr.io/${{ github.repository_owner }}/charts/${{ inputs.service }} \
             --version 0.1.0-ci.${{ github.run_number }} \
             --set image.repository=ghcr.io/${{ github.repository_owner }}/${{ inputs.service }} \
-            --set image.tag=latest \
+            --set image.tag=sha-${{ github.sha }} \
             --set image.pullPolicy=IfNotPresent \
+            --set imagePullSecrets[0].name=ghcr-pull-secret \
             --set ingress.enabled=true \
             --set ingress.hosts[0].host=${{ inputs.service }}.local \
             --set ingress.hosts[0].paths[0].path=/ \
@@ -141,7 +151,13 @@ jobs:
       - name: Wait for service rollout
         run: |
           deployment=$(kubectl get deployment -l app.kubernetes.io/name=${{ inputs.service }} -o jsonpath='{.items[0].metadata.name}')
-          kubectl rollout status "deployment/$deployment" --timeout=180s
+          if ! kubectl rollout status "deployment/$deployment" --timeout=180s; then
+            kubectl describe "deployment/$deployment"
+            kubectl get pods -l app.kubernetes.io/name=${{ inputs.service }} -o wide
+            kubectl describe pods -l app.kubernetes.io/name=${{ inputs.service }}
+            kubectl get events --sort-by=.lastTimestamp
+            exit 1
+          fi
 
       - name: Check service through Ingress
         run: |
