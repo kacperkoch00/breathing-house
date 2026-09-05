@@ -71,6 +71,31 @@ jobs:
           kubectl get endpoints ingress-nginx-controller-admission \
             --namespace ingress-nginx
 
+          kubectl run ingress-webhook-check \
+            --namespace ingress-nginx \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            --command -- sleep 180
+          trap 'kubectl delete pod ingress-webhook-check --namespace ingress-nginx --ignore-not-found' EXIT
+          kubectl wait --namespace ingress-nginx \
+            --for=jsonpath='{.status.phase}'=Running \
+            pod/ingress-webhook-check \
+            --timeout=60s
+
+          for attempt in $(seq 1 60); do
+            response_code=$(kubectl exec --namespace ingress-nginx ingress-webhook-check -- \
+              curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 2 \
+              https://ingress-nginx-controller-admission.ingress-nginx.svc:443/networking/v1/ingresses || true)
+            if test -n "$response_code" && test "$response_code" != "000"; then
+              echo "Admission webhook responded with HTTP $response_code"
+              break
+            fi
+            sleep 3
+          done
+
+          test -n "$response_code" && test "$response_code" != "000"
+
       - name: Build service image for pull request
         if: ${{ !inputs.publish-oci }}
         run: docker build -t ${{ inputs.service }}:ci svc/${{ inputs.service }}

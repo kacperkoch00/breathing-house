@@ -25,6 +25,114 @@ deployment instructions. Backend services keep their HTTP contract in an
 typed server interfaces. Spring Boot services expose interactive documentation
 at `/swagger-ui.html` and the generated document at `/v3/api-docs`.
 
+## Install the complete system on Kubernetes
+
+### Local images and charts
+
+Install `kubectl`, Minikube, and the container runtime first by following
+[docs/kubernetes-wsl.md](docs/kubernetes-wsl.md). From the repository root,
+start Kubernetes and enable the NGINX Ingress controller:
+
+```bash
+make k8s-start
+```
+
+Build all service images and Helm charts:
+
+```bash
+make build-all
+```
+
+Load each local image into Minikube and install each chart with Ingress enabled:
+
+```bash
+for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+  make k8s-load SERVICE="$service" IMAGE="$service:dev"
+  make k8s-deploy SERVICE="$service" K8S_RELEASE="$service"
+done
+```
+
+Wait for all services:
+
+```bash
+for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+  deployment=$(kubectl get deployment -l "app.kubernetes.io/name=$service" -o jsonpath='{.items[0].metadata.name}')
+  kubectl rollout status "deployment/$deployment" --timeout=180s
+done
+```
+
+### Published OCI charts and GHCR images
+
+Log in to GHCR, then create an image pull secret if the packages are private:
+
+```bash
+echo "$GHCR_TOKEN" | helm registry login ghcr.io \
+  --username <github-username> \
+  --password-stdin
+
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<github-username> \
+  --docker-password=<github-token> \
+  --docker-email=<email>
+```
+
+Set the chart version published by GitHub Actions and install all five OCI
+charts with their matching images:
+
+```bash
+CHART_VERSION=0.1.0-ci.<github-run-number>
+IMAGE_TAG=sha-<commit>
+
+for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+  helm upgrade --install "$service" \
+    "oci://ghcr.io/<owner>/charts/$service" \
+    --version "$CHART_VERSION" \
+    --set image.repository="ghcr.io/<owner>/$service" \
+    --set image.tag="$IMAGE_TAG" \
+    --set image.pullPolicy=IfNotPresent \
+    --set imagePullSecrets[0].name=ghcr-pull-secret \
+    --set ingress.enabled=true \
+    --set ingress.hosts[0].host="$service.local" \
+    --set ingress.hosts[0].paths[0].path=/ \
+    --set ingress.hosts[0].paths[0].pathType=Prefix
+done
+```
+
+Omit `imagePullSecrets[0].name=ghcr-pull-secret` when the images are public.
+The NGINX Ingress controller is enabled by `make k8s-start` for Minikube.
+
+### Access services through Ingress
+
+Get the Minikube address:
+
+```bash
+MINIKUBE_IP="$(minikube ip)"
+echo "$MINIKUBE_IP"
+```
+
+Add these hostnames to `/etc/hosts` for browser and curl access:
+
+```text
+<minikube-ip> environment-monitor.local
+<minikube-ip> occupancy-monitor.local
+<minikube-ip> alert-notifier.local
+<minikube-ip> sensors-data-collector.local
+<minikube-ip> home-dashboard.local
+```
+
+Backend health checks go through Ingress:
+
+```bash
+curl -H 'Host: environment-monitor.local' "http://$MINIKUBE_IP/live"
+curl -H 'Host: occupancy-monitor.local' "http://$MINIKUBE_IP/live"
+curl -H 'Host: alert-notifier.local' "http://$MINIKUBE_IP/live"
+curl -H 'Host: sensors-data-collector.local' "http://$MINIKUBE_IP/live"
+```
+
+Open the dashboard at `http://home-dashboard.local` after adding the hosts
+entry. No `kubectl port-forward` is required.
+
 ## Root commands
 
 Run commands from the repository root:
