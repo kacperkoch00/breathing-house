@@ -43,12 +43,6 @@ jobs:
           kubectl rollout status deployment/ingress-nginx-controller \
             --namespace ingress-nginx \
             --timeout=180s
-          kubectl wait --namespace ingress-nginx \
-            --for=condition=complete job/ingress-nginx-admission-create \
-            --timeout=180s
-          kubectl wait --namespace ingress-nginx \
-            --for=condition=complete job/ingress-nginx-admission-patch \
-            --timeout=180s
           for attempt in $(seq 1 60); do
             if kubectl get endpoints ingress-nginx-controller-admission \
               --namespace ingress-nginx \
