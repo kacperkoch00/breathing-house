@@ -155,6 +155,7 @@ jobs:
             kubectl describe "deployment/$deployment"
             kubectl get pods -l app.kubernetes.io/name=${{ inputs.service }} -o wide
             kubectl describe pods -l app.kubernetes.io/name=${{ inputs.service }}
+            kubectl logs -l app.kubernetes.io/name=${{ inputs.service }} --all-containers=true --tail=100 || true
             kubectl get events --sort-by=.lastTimestamp
             exit 1
           fi

@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ default (printf "%s-%s" .Release.Name .Chart.Name) .Values.serviceAccount.name }}
       containers:
         - name: {{ .Chart.Name }}
