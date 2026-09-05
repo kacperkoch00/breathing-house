@@ -7,8 +7,13 @@ COPY . .
 RUN npm run build
 
 FROM docker.io/library/nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN mkdir -p /tmp/nginx/client_temp /tmp/nginx/proxy_temp \
+	/tmp/nginx/fastcgi_temp /tmp/nginx/uwsgi_temp /tmp/nginx/scgi_temp \
+	&& chown -R 101:101 /tmp/nginx
+COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080
 
+USER 101:101
+ENTRYPOINT []
 CMD ["nginx", "-g", "daemon off;"]
