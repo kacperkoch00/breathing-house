@@ -30,10 +30,27 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
 
+      - name: Create Kind configuration with Ingress ports
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              extraPortMappings:
+                - containerPort: 80
+                  hostPort: 80
+                  protocol: TCP
+                - containerPort: 443
+                  hostPort: 443
+                  protocol: TCP
+          EOF
+
       - name: Create Kind cluster
         uses: helm/kind-action@v1
         with:
           cluster_name: breathing-house
+          config: /tmp/kind-config.yaml
 
       - name: Install NGINX Ingress controller
         run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
@@ -102,10 +119,11 @@ jobs:
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error \
               -H 'Host: ${{ inputs.service }}.local' \
-              http://127.0.0.1${{ inputs.path }}; then
+              "http://127.0.0.1${{ inputs.path }}"; then
               exit 0
             fi
             sleep 2
           done
-          kubectl get pods,ingress,svc
+          kubectl get nodes -o wide
+          kubectl get pods,ingress,svc -A
           exit 1
