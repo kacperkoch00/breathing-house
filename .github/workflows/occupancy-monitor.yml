@@ -25,12 +25,12 @@ jobs:
       run:
         working-directory: svc/occupancy-monitor
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: svc/occupancy-monitor/go.mod
           cache-dependency-path: svc/occupancy-monitor/go.sum
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: Generate OpenAPI code
         run: make generate
       - name: Test
