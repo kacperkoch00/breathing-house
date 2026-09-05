@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: occupancy-monitor
+  tag: dev
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8081
+
+env:
+  HTTP_PORT: "8081"
+  SHUTDOWN_TIMEOUT: 10s
+  LOG_LEVEL: info
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

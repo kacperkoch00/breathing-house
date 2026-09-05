@@ -1,0 +1,49 @@
+name: sensors-data-collector CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/sensors-data-collector/**'
+      - 'deploy/helm/sensors-data-collector/**'
+      - 'Makefile'
+      - '.github/workflows/sensors-data-collector.yml'
+  pull_request:
+    paths:
+      - 'svc/sensors-data-collector/**'
+      - 'deploy/helm/sensors-data-collector/**'
+      - 'Makefile'
+      - '.github/workflows/sensors-data-collector.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: azure/setup-helm@v4
+      - name: Test and package
+        working-directory: svc/sensors-data-collector
+        run: mvn -B test package
+      - name: Integration smoke test
+        working-directory: svc/sensors-data-collector
+        run: |
+          java -jar target/sensors-data-collector-0.1.0-SNAPSHOT.jar --server.port=18083 >/tmp/sensors-data-collector.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:18083/live && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18083/ready
+      - name: Helm lint
+        run: helm lint deploy/helm/sensors-data-collector
+      - name: Build image
+        run: docker build -t sensors-data-collector:ci svc/sensors-data-collector

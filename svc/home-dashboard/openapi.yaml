@@ -1,0 +1,6 @@
+openapi: 3.0.3
+info:
+  title: Home Dashboard
+  version: 1.0.0
+  description: The dashboard is currently a static frontend. Its backend API contract will be added when dashboard data endpoints are introduced.
+paths: {}

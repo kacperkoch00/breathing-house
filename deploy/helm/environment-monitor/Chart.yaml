@@ -1,0 +1,6 @@
+apiVersion: v2
+name: environment-monitor
+description: Helm chart for the Environment Monitor service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

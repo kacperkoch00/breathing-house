@@ -1,0 +1,3 @@
+level: info
+format: console
+output: stdout

@@ -1,0 +1,55 @@
+name: occupancy-monitor CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/occupancy-monitor/**'
+      - 'deploy/helm/occupancy-monitor/**'
+      - 'Makefile'
+      - '.github/workflows/occupancy-monitor.yml'
+  pull_request:
+    paths:
+      - 'svc/occupancy-monitor/**'
+      - 'deploy/helm/occupancy-monitor/**'
+      - 'Makefile'
+      - '.github/workflows/occupancy-monitor.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: svc/occupancy-monitor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: svc/occupancy-monitor/go.mod
+          cache-dependency-path: svc/occupancy-monitor/go.sum
+      - uses: azure/setup-helm@v4
+      - name: Generate OpenAPI code
+        run: make generate
+      - name: Test
+        run: go test ./...
+      - name: Build binary
+        run: go build -o /tmp/occupancy-monitor ./cmd/server
+      - name: Integration smoke test
+        run: |
+          HTTP_PORT=18081 /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:18081/live && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18081/ready
+      - name: Helm lint
+        working-directory: .
+        run: helm lint deploy/helm/occupancy-monitor
+      - name: Build image
+        working-directory: .
+        run: docker build -t occupancy-monitor:ci svc/occupancy-monitor

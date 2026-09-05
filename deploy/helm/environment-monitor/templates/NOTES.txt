@@ -1,0 +1,10 @@
+Environment Monitor has been deployed.
+
+To access it locally:
+
+  kubectl port-forward svc/{{ include "environment-monitor.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+Then check the health endpoints:
+
+  curl http://127.0.0.1:{{ .Values.service.port }}/live
+  curl http://127.0.0.1:{{ .Values.service.port }}/ready

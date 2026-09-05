@@ -1,0 +1,7 @@
+.git/
+.gitignore
+.vscode/
+*.swp
+*.tmp
+Dockerfile
+README.md

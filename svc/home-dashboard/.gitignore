@@ -1,0 +1,15 @@
+# Node dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# IDE files
+.idea/
+.vscode/

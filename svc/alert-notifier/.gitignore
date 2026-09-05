@@ -1,0 +1,12 @@
+# Java build output
+target/
+build/
+out/
+.gradle/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/

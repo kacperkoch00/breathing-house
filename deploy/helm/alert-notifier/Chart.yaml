@@ -1,0 +1,6 @@
+apiVersion: v2
+name: alert-notifier
+description: Helm chart for the Alert Notifier service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

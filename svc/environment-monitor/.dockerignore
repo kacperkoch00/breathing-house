@@ -1,0 +1,8 @@
+.git
+.gitignore
+.vscode
+bin
+coverage.out
+*.test
+Dockerfile
+README.md

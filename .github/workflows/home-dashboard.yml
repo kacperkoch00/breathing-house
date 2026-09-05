@@ -1,0 +1,49 @@
+name: home-dashboard CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/home-dashboard/**'
+      - 'deploy/helm/home-dashboard/**'
+      - 'Makefile'
+      - '.github/workflows/home-dashboard.yml'
+  pull_request:
+    paths:
+      - 'svc/home-dashboard/**'
+      - 'deploy/helm/home-dashboard/**'
+      - 'Makefile'
+      - '.github/workflows/home-dashboard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: svc/home-dashboard/package.json
+      - uses: azure/setup-helm@v4
+      - name: Install dependencies and build
+        working-directory: svc/home-dashboard
+        run: npm install && npm run build
+      - name: Integration smoke test
+        working-directory: svc/home-dashboard
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 14173 >/tmp/home-dashboard.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:14173/ && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Helm lint
+        run: helm lint deploy/helm/home-dashboard
+      - name: Build image
+        run: docker build -t home-dashboard:ci svc/home-dashboard

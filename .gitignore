@@ -1,0 +1,20 @@
+# Build and packaging output
+dist/
+.dist/
+bin/
+*.test
+coverage.out
+node_modules/
+target/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store

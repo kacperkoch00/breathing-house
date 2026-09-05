@@ -1,0 +1,8 @@
+# Go build output
+bin/
+*.test
+coverage.out
+
+# IDE files
+.idea/
+.vscode/

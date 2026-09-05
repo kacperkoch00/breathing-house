@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  repository: alert-notifier
+  tag: dev
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8082
+
+env:
+  HTTP_PORT: "8082"
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

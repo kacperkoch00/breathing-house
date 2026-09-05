@@ -1,0 +1,30 @@
+openapi: 3.0.3
+info:
+  title: Alert Notifier
+  version: 1.0.0
+
+paths:
+  /live:
+    get:
+      operationId: getLive
+      summary: Check whether the service is alive
+      responses:
+        '200':
+          description: The service is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+  /ready:
+    get:
+      operationId: getReady
+      summary: Check whether the service is ready
+      responses:
+        '200':
+          description: The service is ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: READY

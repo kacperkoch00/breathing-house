@@ -1,0 +1,49 @@
+name: alert-notifier CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/alert-notifier/**'
+      - 'deploy/helm/alert-notifier/**'
+      - 'Makefile'
+      - '.github/workflows/alert-notifier.yml'
+  pull_request:
+    paths:
+      - 'svc/alert-notifier/**'
+      - 'deploy/helm/alert-notifier/**'
+      - 'Makefile'
+      - '.github/workflows/alert-notifier.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: azure/setup-helm@v4
+      - name: Test and package
+        working-directory: svc/alert-notifier
+        run: mvn -B test package
+      - name: Integration smoke test
+        working-directory: svc/alert-notifier
+        run: |
+          java -jar target/alert-notifier-0.1.0-SNAPSHOT.jar --server.port=18082 >/tmp/alert-notifier.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:18082/live && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18082/ready
+      - name: Helm lint
+        run: helm lint deploy/helm/alert-notifier
+      - name: Build image
+        run: docker build -t alert-notifier:ci svc/alert-notifier
