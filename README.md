@@ -224,6 +224,11 @@ make SERVICE=environment-monitor image IMAGE=ghcr.io/<owner>/environment-monitor
 Each service image is defined by its Dockerfile under `svc/<service>`.
 Each service has its own Kubernetes configuration under `deploy/helm/<service>`.
 
+The nightly regression workflow runs at midnight UTC and can also be started
+manually from GitHub Actions. It installs all five services into Kind, runs the
+Robot Framework suite under `tests/robot`, and uploads the Robot report and
+Kubernetes diagnostics as the `night-regression-results-<run-number>` artifact.
+
 For a local Kubernetes cluster on WSL, see
 [docs/kubernetes-wsl.md](docs/kubernetes-wsl.md). The short workflow is:
 
