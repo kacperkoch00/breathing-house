@@ -58,6 +58,14 @@ runs its build, unit tests, integration smoke test, Helm lint, and container
 image build. Pushes to `main` also publish the image to GitHub Container
 Registry; pull requests build the image without publishing it.
 
+After those checks, each workflow starts a temporary Kind Kubernetes cluster,
+installs the NGINX Ingress controller, installs the service Helm chart with
+the locally built image, waits for rollout, and verifies the service through
+Ingress. On `main` pushes it instead installs the just-published OCI chart and
+GHCR image. Backend services are checked through `/live`; the dashboard is
+checked through `/`. This test uses Ingress directly and does not use
+`kubectl port-forward`.
+
 Images are published as:
 
 ```text
@@ -72,6 +80,9 @@ Each push also receives an immutable `sha-<commit>` tag. After the first
 publish, configure package visibility in GitHub. If a package remains private,
 create an image pull secret and pass it through the service chart's
 `imagePullSecrets` value.
+
+The scheduled cleanup workflow removes package versions older than seven days,
+keeping the newest two versions of every service image and Helm chart.
 
 Each service chart is published alongside its image as an OCI artifact:
 

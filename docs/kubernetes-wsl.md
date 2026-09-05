@@ -55,6 +55,11 @@ minikube start --driver=docker
 minikube addons enable ingress
 ```
 
+GitHub Actions runs the equivalent integration test automatically with a
+temporary Kind cluster. It installs the NGINX Ingress controller, deploys the
+service chart, and checks the endpoint through the Ingress Host header rather
+than using port-forwarding.
+
 ## Build and deploy a service
 
 Build the image, load it into Minikube, and install the service chart with

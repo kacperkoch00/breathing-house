@@ -8,12 +8,14 @@ on:
       - 'deploy/helm/alert-notifier/**'
       - 'Makefile'
       - '.github/workflows/alert-notifier.yml'
+      - '.github/workflows/kubernetes-integration.yml'
   pull_request:
     paths:
       - 'svc/alert-notifier/**'
       - 'deploy/helm/alert-notifier/**'
       - 'Makefile'
       - '.github/workflows/alert-notifier.yml'
+      - '.github/workflows/kubernetes-integration.yml'
 
 permissions:
   contents: read
@@ -76,3 +78,13 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.image.outputs.tags }}
           labels: ${{ steps.image.outputs.labels }}
+
+  kubernetes-integration:
+    needs: build-test-integration
+    if: needs.build-test-integration.result == 'success'
+    uses: ./.github/workflows/kubernetes-integration.yml
+    with:
+      service: alert-notifier
+      path: /live
+      publish-oci: ${{ github.event_name == 'push' }}
+    secrets: inherit

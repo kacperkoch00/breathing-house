@@ -1,0 +1,98 @@
+name: Kubernetes integration
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: Service directory and chart name
+        required: true
+        type: string
+      path:
+        description: HTTP path to verify through Ingress
+        required: true
+        type: string
+      publish-oci:
+        description: Whether to install the published OCI chart and image
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  ingress-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: breathing-house
+
+      - name: Install NGINX Ingress controller
+        run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+      - name: Wait for NGINX Ingress controller
+        run: kubectl wait --namespace ingress-nginx --for=condition=Ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
+
+      - name: Build service image for pull request
+        if: ${{ !inputs.publish-oci }}
+        run: docker build -t ${{ inputs.service }}:ci svc/${{ inputs.service }}
+
+      - name: Load service image into Kind for pull request
+        if: ${{ !inputs.publish-oci }}
+        run: kind load docker-image ${{ inputs.service }}:ci --name breathing-house
+
+      - name: Log in Helm to GitHub Container Registry
+        if: inputs.publish-oci
+        run: echo "${{ github.token }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Install published OCI chart with Ingress
+        if: inputs.publish-oci
+        run: |
+          helm upgrade --install ${{ inputs.service }} \
+            oci://ghcr.io/${{ github.repository_owner }}/charts/${{ inputs.service }} \
+            --version 0.1.0-ci.${{ github.run_number }} \
+            --set image.repository=ghcr.io/${{ github.repository_owner }}/${{ inputs.service }} \
+            --set image.tag=latest \
+            --set image.pullPolicy=IfNotPresent \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=${{ inputs.service }}.local \
+            --set ingress.hosts[0].paths[0].path=/ \
+            --set ingress.hosts[0].paths[0].pathType=Prefix
+
+      - name: Install local chart with Ingress for pull request
+        if: ${{ !inputs.publish-oci }}
+        run: |
+          helm upgrade --install ${{ inputs.service }} deploy/helm/${{ inputs.service }} \
+            --set image.repository=${{ inputs.service }} \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=${{ inputs.service }}.local \
+            --set ingress.hosts[0].paths[0].path=/ \
+            --set ingress.hosts[0].paths[0].pathType=Prefix
+
+      - name: Wait for service rollout
+        run: |
+          deployment=$(kubectl get deployment -l app.kubernetes.io/name=${{ inputs.service }} -o jsonpath='{.items[0].metadata.name}')
+          kubectl rollout status "deployment/$deployment" --timeout=180s
+
+      - name: Check service through Ingress
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              -H 'Host: ${{ inputs.service }}.local' \
+              http://127.0.0.1${{ inputs.path }}; then
+              exit 0
+            fi
+            sleep 2
+          done
+          kubectl get pods,ingress,svc
+          exit 1
