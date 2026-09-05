@@ -11,6 +11,10 @@ on:
         description: HTTP path to verify through Ingress
         required: true
         type: string
+      readiness-path:
+        description: Readiness path to verify through Ingress
+        required: true
+        type: string
       publish-oci:
         description: Whether to install the published OCI chart and image
         required: true
@@ -141,11 +145,22 @@ jobs:
 
       - name: Check service through Ingress
         run: |
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error \
+          check_path() {
+            curl --fail --silent --show-error \
               -H 'Host: ${{ inputs.service }}.local' \
-              "http://127.0.0.1${{ inputs.path }}"; then
-              exit 0
+              "http://127.0.0.1$1" >/tmp/ingress-response
+          }
+
+          successful_checks=0
+          for attempt in $(seq 1 30); do
+            if check_path '${{ inputs.path }}' && check_path '${{ inputs.readiness-path }}'; then
+              successful_checks=$((successful_checks + 1))
+              cat /tmp/ingress-response
+              if test "$successful_checks" -ge 2; then
+                exit 0
+              fi
+            else
+              successful_checks=0
             fi
             sleep 2
           done

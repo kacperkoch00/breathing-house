@@ -86,5 +86,6 @@ jobs:
     with:
       service: sensors-data-collector
       path: /live
+      readiness-path: /ready
       publish-oci: ${{ github.event_name == 'push' }}
     secrets: inherit

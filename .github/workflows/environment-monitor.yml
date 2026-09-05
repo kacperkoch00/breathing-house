@@ -92,5 +92,6 @@ jobs:
     with:
       service: environment-monitor
       path: /live
+      readiness-path: /ready
       publish-oci: ${{ github.event_name == 'push' }}
     secrets: inherit
