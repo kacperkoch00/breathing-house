@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build-test-integration:
@@ -45,5 +46,33 @@ jobs:
           curl --fail http://127.0.0.1:18083/ready
       - name: Helm lint
         run: helm lint deploy/helm/sensors-data-collector
-      - name: Build image
-        run: docker build -t sensors-data-collector:ci svc/sensors-data-collector
+      - name: Package Helm chart
+        run: mkdir -p /tmp/helm && helm package deploy/helm/sensors-data-collector --destination /tmp/helm --version 0.1.0-ci.${{ github.run_number }} --app-version ${{ github.sha }}
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in Helm to GitHub Container Registry
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish Helm chart
+        if: github.event_name == 'push'
+        run: helm push /tmp/helm/sensors-data-collector-0.1.0-ci.${{ github.run_number }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+      - name: Set image metadata
+        id: image
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/sensors-data-collector
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: svc/sensors-data-collector
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}

@@ -14,6 +14,7 @@ svc/                         Service source code
 deploy/helm/                 One Helm chart per deployable service
 Makefile                     Repository-wide build and deployment commands
 .github/workflows/           Independent CI workflow per service
+docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
 ```
 
 ## Services
@@ -54,7 +55,44 @@ make helm-package SERVICE=occupancy-monitor
 Each service has an independent GitHub Actions workflow. A change under a
 service or its Helm chart starts only that service's CI workflow. Every workflow
 runs its build, unit tests, integration smoke test, Helm lint, and container
-image build.
+image build. Pushes to `main` also publish the image to GitHub Container
+Registry; pull requests build the image without publishing it.
+
+Images are published as:
+
+```text
+ghcr.io/<owner>/environment-monitor:latest
+ghcr.io/<owner>/occupancy-monitor:latest
+ghcr.io/<owner>/alert-notifier:latest
+ghcr.io/<owner>/sensors-data-collector:latest
+ghcr.io/<owner>/home-dashboard:latest
+```
+
+Each push also receives an immutable `sha-<commit>` tag. After the first
+publish, configure package visibility in GitHub. If a package remains private,
+create an image pull secret and pass it through the service chart's
+`imagePullSecrets` value.
+
+Each service chart is published alongside its image as an OCI artifact:
+
+```text
+oci://ghcr.io/<owner>/charts/environment-monitor
+oci://ghcr.io/<owner>/charts/occupancy-monitor
+oci://ghcr.io/<owner>/charts/alert-notifier
+oci://ghcr.io/<owner>/charts/sensors-data-collector
+oci://ghcr.io/<owner>/charts/home-dashboard
+```
+
+The chart version is `0.1.0-ci.<github-run-number>` and its `appVersion` is the
+image commit SHA. Install a published chart with the matching image tag:
+
+```bash
+helm upgrade --install alert-notifier \
+  oci://ghcr.io/<owner>/charts/alert-notifier \
+  --version 0.1.0-ci.<github-run-number> \
+  --set image.repository=ghcr.io/<owner>/alert-notifier \
+  --set image.tag=sha-<commit>
+```
 
 The root `SERVICE` variable selects the service for service-specific commands. For example:
 
@@ -64,6 +102,16 @@ make SERVICE=environment-monitor image IMAGE=ghcr.io/<owner>/environment-monitor
 
 Each service image is defined by its Dockerfile under `svc/<service>`.
 Each service has its own Kubernetes configuration under `deploy/helm/<service>`.
+
+For a local Kubernetes cluster on WSL, see
+[docs/kubernetes-wsl.md](docs/kubernetes-wsl.md). The short workflow is:
+
+```bash
+make k8s-start
+make build SERVICE=environment-monitor
+make k8s-load SERVICE=environment-monitor
+make k8s-deploy SERVICE=environment-monitor
+```
 
 Install the chart into Kubernetes:
 

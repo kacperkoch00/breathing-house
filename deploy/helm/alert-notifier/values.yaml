@@ -14,6 +14,17 @@ service:
   type: ClusterIP
   port: 8082
 
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: alert-notifier.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
 env:
   HTTP_PORT: "8082"
 

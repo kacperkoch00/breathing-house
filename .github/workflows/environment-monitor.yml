@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build-test-integration:
@@ -50,6 +51,34 @@ jobs:
       - name: Helm lint
         working-directory: .
         run: helm lint deploy/helm/environment-monitor
-      - name: Build image
+      - name: Package Helm chart
         working-directory: .
-        run: docker build -t environment-monitor:ci svc/environment-monitor
+        run: mkdir -p /tmp/helm && helm package deploy/helm/environment-monitor --destination /tmp/helm --version 0.1.0-ci.${{ github.run_number }} --app-version ${{ github.sha }}
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in Helm to GitHub Container Registry
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish Helm chart
+        if: github.event_name == 'push'
+        run: helm push /tmp/helm/environment-monitor-0.1.0-ci.${{ github.run_number }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+      - name: Set image metadata
+        id: image
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/environment-monitor
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: svc/environment-monitor
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}

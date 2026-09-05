@@ -34,6 +34,17 @@ service:
   type: ClusterIP
   port: 8080
 
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: environment-monitor.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
 env:
   HTTP_PORT: "8080"
   SHUTDOWN_TIMEOUT: 10s

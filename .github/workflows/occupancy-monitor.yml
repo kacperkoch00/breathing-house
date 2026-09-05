@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build-test-integration:
@@ -50,6 +51,34 @@ jobs:
       - name: Helm lint
         working-directory: .
         run: helm lint deploy/helm/occupancy-monitor
-      - name: Build image
+      - name: Package Helm chart
         working-directory: .
-        run: docker build -t occupancy-monitor:ci svc/occupancy-monitor
+        run: mkdir -p /tmp/helm && helm package deploy/helm/occupancy-monitor --destination /tmp/helm --version 0.1.0-ci.${{ github.run_number }} --app-version ${{ github.sha }}
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in Helm to GitHub Container Registry
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish Helm chart
+        if: github.event_name == 'push'
+        run: helm push /tmp/helm/occupancy-monitor-0.1.0-ci.${{ github.run_number }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+      - name: Set image metadata
+        id: image
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/occupancy-monitor
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: svc/occupancy-monitor
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}

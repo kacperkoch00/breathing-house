@@ -14,6 +14,17 @@ service:
   type: ClusterIP
   port: 8083
 
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: sensors-data-collector.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
 env:
   HTTP_PORT: "8083"
 

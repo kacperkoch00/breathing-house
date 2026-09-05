@@ -1,4 +1,4 @@
-.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes
+.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-deploy
 
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
@@ -9,6 +9,7 @@ JAVA_SERVICES := alert-notifier sensors-data-collector
 IMAGE_SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
 SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
 DIFF_BASE ?= HEAD~1
+K8S_RELEASE ?= $(SERVICE)
 
 test: test-go test-java test-dashboard
 
@@ -106,3 +107,20 @@ build-changes:
 			$(MAKE) build SERVICE=$$service IMAGE=$$service:dev; \
 		done; \
 	fi
+
+k8s-start:
+	minikube start --driver=podman
+	minikube addons enable ingress
+
+k8s-stop:
+	minikube stop
+
+k8s-load:
+	minikube image load $(IMAGE)
+
+k8s-deploy:
+	helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
+		--set image.repository=$(SERVICE) \
+		--set image.tag=dev \
+		--set image.pullPolicy=IfNotPresent \
+		--set ingress.enabled=true
