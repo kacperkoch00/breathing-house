@@ -169,7 +169,7 @@ jobs:
             -n observability \
             -- \
             curl --fail --silent --show-error \
-            "http://loki-gateway.observability.svc.cluster.local/ready"
+            "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/labels"
 
       - name: Build service images
         run: |
