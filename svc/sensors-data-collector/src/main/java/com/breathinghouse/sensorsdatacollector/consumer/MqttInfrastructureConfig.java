@@ -1,4 +1,4 @@
-package com.breathinghouse.alertnotifier.consumer;
+package com.breathinghouse.sensorsdatacollector.consumer;
 
 import com.hivemq.client.mqtt.MqttClient;
 import com.hivemq.client.mqtt.lifecycle.MqttClientConnectedContext;

@@ -6,7 +6,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.breathinghouse.alertnotifier" level="${LOG_LEVEL:-INFO}"/>
+    <logger name="com.breathinghouse.sensorsdatacollector" level="${LOG_LEVEL:-INFO}"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

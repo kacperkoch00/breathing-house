@@ -238,9 +238,10 @@ For a local Kubernetes cluster on WSL, see
 [docs/kubernetes-wsl.md](docs/kubernetes-wsl.md). The short workflow is:
 
 ```bash
-make k8s-start
 make build SERVICE=environment-monitor
 make k8s-load SERVICE=environment-monitor
+make k8s-mqtt
+make k8s-observability
 make k8s-deploy SERVICE=environment-monitor
 ```
 

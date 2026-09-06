@@ -1,0 +1,202 @@
+name: Kubernetes logging integration
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KIND_CLUSTER: breathing-house
+
+jobs:
+  logging-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Create Kind configuration
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+          EOF
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          config: /tmp/kind-config.yaml
+
+      - name: Install Mosquitto MQTT broker
+        run: |
+          helm upgrade --install mqtt-broker deploy/helm/mqtt-broker
+          kubectl rollout status deployment/mqtt-broker --timeout=120s
+
+      - name: Install Loki
+        run: |
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          helm repo add grafana-community https://grafana-community.github.io/helm-charts
+          helm repo update
+          helm upgrade --install loki grafana-community/loki \
+            --namespace observability \
+            -f deploy/observability/loki-values.yaml
+
+      - name: Install Alloy
+        run: |
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm upgrade --install alloy grafana/alloy \
+            --namespace observability \
+            -f deploy/observability/alloy-values.yaml
+
+      - name: Wait for observability stack
+        run: |
+          kubectl rollout status deployment/loki-gateway \
+            --namespace observability \
+            --timeout=180s
+
+          kubectl rollout status daemonset/alloy \
+            --namespace observability \
+            --timeout=180s
+
+      - name: Build service images
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            docker build -t "$service:logging-test" "svc/$service"
+          done
+
+      - name: Load service images into Kind
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            kind load docker-image "$service:logging-test" --name "$KIND_CLUSTER"
+          done
+
+      - name: Deploy all services
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            helm upgrade --install "$service" "deploy/helm/$service" \
+              --set image.repository="$service" \
+              --set image.tag=logging-test \
+              --set image.pullPolicy=Never \
+              --set env.MQTT_BROKER_IP="mqtt-broker" \
+              --set env.MQTT_BROKER_PORT="1883"
+          done
+
+      - name: Wait for all service rollouts
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            deployment=$(kubectl get deployment \
+              -l "app.kubernetes.io/name=$service" \
+              -o jsonpath='{.items[0].metadata.name}')
+
+            kubectl rollout status \
+              "deployment/$deployment" \
+              --timeout=180s
+          done
+
+      - name: Wait for logs to reach Loki
+        run: |
+          echo "Waiting for application logs to reach Loki..."
+
+          for attempt in $(seq 1 30); do
+            response=$(kubectl run loki-query \
+              --rm \
+              --restart=Never \
+              --image=curlimages/curl:8.10.1 \
+              -n observability \
+              -- \
+              curl --silent \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query?query=%7Bpart_of%3D%22breathing-house%22%7D" \
+              2>/dev/null || true)
+
+            if echo "$response" | grep -q "environment-monitor"; then
+              echo "Logs are being received by Loki."
+              break
+            fi
+
+            echo "Logs not available yet, attempt $attempt/30..."
+            sleep 2
+          done
+
+      - name: Check logs for all services
+        run: |
+          services="environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard"
+
+          failed=0
+
+          for service in $services; do
+            echo "Checking logs for $service..."
+
+            response=$(kubectl run "loki-query-$service" \
+              --rm \
+              --restart=Never \
+              --image=curlimages/curl:8.10.1 \
+              -n observability \
+              -- \
+              curl --silent \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query?query=%7Bapp%3D%22$service%22%7D" \
+              2>/dev/null || true)
+
+            if echo "$response" | grep -q '"values"'; then
+              echo "PASS: $service has logs in Loki."
+            else
+              echo "FAIL: $service has no logs in Loki."
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Logging integration test failed."
+            exit 1
+          fi
+
+          echo "All services have logs in Loki."
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p logging-results
+
+          kubectl get pods,deployments,services -A -o wide \
+            > logging-results/resources.txt
+
+          kubectl get events -A --sort-by=.lastTimestamp \
+            > logging-results/events.txt
+
+          kubectl logs -n observability \
+            -l app.kubernetes.io/name=alloy \
+            --all-containers=true \
+            --tail=200 \
+            > logging-results/alloy.log 2>&1 || true
+
+          kubectl logs -n observability \
+            -l app.kubernetes.io/name=loki \
+            --all-containers=true \
+            --tail=200 \
+            > logging-results/loki.log 2>&1 || true
+
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            kubectl logs \
+              -l "app.kubernetes.io/name=$service" \
+              --all-containers=true \
+              --tail=200 \
+              > "logging-results/$service.log" 2>&1 || true
+          done
+
+      - name: Upload logging diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logging-integration-results-${{ github.run_number }}
+          path: logging-results
+          if-no-files-found: error
+          retention-days: 30

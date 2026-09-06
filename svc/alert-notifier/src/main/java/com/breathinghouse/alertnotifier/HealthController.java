@@ -1,4 +1,4 @@
-package com.breathinghouse.sensorsdatacollector;
+package com.breathinghouse.alertnotifier;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;

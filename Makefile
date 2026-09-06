@@ -1,4 +1,4 @@
-.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-deploy
+.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-deploy k8s-observability k8s-mqtt
 
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
@@ -60,12 +60,12 @@ helm-package-all:
 	done
 
 image:
-	docker build -t $(IMAGE) $(SERVICE_DIR)
+	podman build -t $(IMAGE) $(SERVICE_DIR)
 
 images:
 	@for service in $(IMAGE_SERVICES); do \
 		echo "==> building $$service"; \
-		docker build -t $$service:dev svc/$$service; \
+		podman build -t localhost/$$service:dev svc/$$service; \
 	done
 
 build:
@@ -81,17 +81,17 @@ build:
 				$(MAKE) -C $(SERVICE_DIR) test; \
 				helm lint $(CHART_DIR); \
 				$(MAKE) helm-package SERVICE=$(SERVICE); \
-				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+				podman build -t $(IMAGE) $(SERVICE_DIR);; \
 			alert-notifier|sensors-data-collector) \
 				(cd $(SERVICE_DIR) && mvn -B test package); \
 				helm lint $(CHART_DIR); \
 				$(MAKE) helm-package SERVICE=$(SERVICE); \
-				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+				podman build -t $(IMAGE) $(SERVICE_DIR);; \
 			home-dashboard) \
 				(cd $(SERVICE_DIR) && npm install && npm run build); \
 				helm lint $(CHART_DIR); \
 				$(MAKE) helm-package SERVICE=$(SERVICE); \
-				docker build -t $(IMAGE) $(SERVICE_DIR);; \
+				podman build -t $(IMAGE) $(SERVICE_DIR);; \
 			*) echo "Unknown SERVICE='$(SERVICE)'. Choose one of: $(SERVICES) all"; exit 1;; \
 		esac; \
 	fi
@@ -112,7 +112,7 @@ build-changes:
 	else \
 		for service in $$changed_services; do \
 			echo "==> building changed service $$service"; \
-			$(MAKE) build SERVICE=$$service IMAGE=$$service:dev; \
+			$(MAKE) build SERVICE=$$service IMAGE=localhost/$$service:dev; \
 		done; \
 	fi
 
@@ -154,3 +154,22 @@ k8s-deploy:
 			--set image.pullPolicy=IfNotPresent \
 			--set ingress.enabled=true; \
 	fi
+
+k8s-mqtt: k8s-start
+	helm upgrade --install mqtt-broker deploy/helm/mqtt-broker
+	kubectl rollout status deployment/mqtt-broker --timeout=120s
+
+k8s-observability: k8s-start
+	@kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+	helm repo add grafana https://grafana.github.io/helm-charts
+	helm repo add grafana-community https://grafana-community.github.io/helm-charts
+	helm repo update
+	helm upgrade --install loki grafana-community/loki \
+		--namespace observability \
+		-f deploy/observability/loki-values.yaml
+	helm upgrade --install alloy grafana/alloy \
+		--namespace observability \
+		-f deploy/observability/alloy-values.yaml
+	helm upgrade --install grafana grafana-community/grafana \
+		--namespace observability \
+		-f deploy/observability/grafana-values.yaml
