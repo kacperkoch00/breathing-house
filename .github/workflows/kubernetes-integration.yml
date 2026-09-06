@@ -100,6 +100,60 @@ jobs:
 
           test -n "$response_code" && test "$response_code" != "000"
 
+      - name: Install Mosquitto in Kind
+        run: |
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: mosquitto-config
+          data:
+            mosquitto.conf: |
+              listener 1883
+              allow_anonymous true
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: mosquitto
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: mosquitto
+            template:
+              metadata:
+                labels:
+                  app: mosquitto
+              spec:
+                containers:
+                  - name: mosquitto
+                    image: eclipse-mosquitto:2.0.18
+                    ports:
+                      - containerPort: 1883
+                    volumeMounts:
+                      - name: config
+                        mountPath: /mosquitto/config/mosquitto.conf
+                        subPath: mosquitto.conf
+                volumes:
+                  - name: config
+                    configMap:
+                      name: mosquitto-config
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mosquitto
+          spec:
+            selector:
+              app: mosquitto
+            ports:
+              - port: 1883
+                targetPort: 1883
+          EOF
+
+          kubectl rollout status deployment/mosquitto --timeout=120s
+
       - name: Build service image for pull request
         if: ${{ !inputs.publish-oci }}
         run: docker build -t ${{ inputs.service }}:ci svc/${{ inputs.service }}
@@ -134,7 +188,9 @@ jobs:
             --set ingress.enabled=true \
             --set ingress.hosts[0].host=${{ inputs.service }}.local \
             --set ingress.hosts[0].paths[0].path=/ \
-            --set ingress.hosts[0].paths[0].pathType=Prefix
+            --set ingress.hosts[0].paths[0].pathType=Prefix \
+            --set env.MQTT_BROKER_IP=mosquitto \
+            --set env.MQTT_BROKER_PORT=1883
 
       - name: Install local chart with Ingress for pull request
         if: ${{ !inputs.publish-oci }}
@@ -146,7 +202,9 @@ jobs:
             --set ingress.enabled=true \
             --set ingress.hosts[0].host=${{ inputs.service }}.local \
             --set ingress.hosts[0].paths[0].path=/ \
-            --set ingress.hosts[0].paths[0].pathType=Prefix
+            --set ingress.hosts[0].paths[0].pathType=Prefix \
+            --set env.MQTT_BROKER_IP=mosquitto \
+            --set env.MQTT_BROKER_PORT=1883
 
       - name: Wait for service rollout
         run: |
