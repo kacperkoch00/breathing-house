@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!--
-    Emits one ECS-formatted JSON object per event so Loki can parse levels,
-    logger names and stack traces as fields instead of opaque text.
-    The format itself is selected by logging.structured.format.console.
-    -->
-    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
-    <include resource="org/springframework/boot/logging/logback/structured-console-appender.xml"/>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
 
-    <logger name="com.breathinghouse.sensorsdatacollector" level="${LOG_LEVEL:-INFO}"/>
+    <logger name="com.breathinghouse.alertnotifier" level="${LOG_LEVEL:-INFO}"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

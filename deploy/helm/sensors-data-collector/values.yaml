@@ -29,7 +29,9 @@ ingress:
 
 env:
   HTTP_PORT: "8083"
-  LOG_LEVEL: "info"
+  LOG_LEVEL: "DEBUG"
+  MQTT_BROKER_IP: "mqtt-broker"
+  MQTT_BROKER_PORT_NUMBER: "1883"
 
 resources: {}
 

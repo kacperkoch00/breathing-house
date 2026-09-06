@@ -28,7 +28,7 @@ The application can be fully configured at runtime using the following environme
 | Environment Variable | Description | Local Default Value | Java Property Mapping |
 | :--- | :--- | :--- | :--- |
 | `MQTT_BROKER_IP` | IPv4 address or hostname of the Pi Gateway broker | `localhost` | `mqtt.broker.ip` |
-| `MQTT_BROKER_PORT` | Network port for the MQTT 5 broker instance | `1883` | `mqtt.broker.port` |
+| `MQTT_BROKER_PORT_NUMBER` | Network port for the MQTT 5 broker instance | `1883` | `mqtt.broker.port` |
 | `MQTT_CLIENT_ID` | Base identifier string for this microservice node | `sensors-data-collector` | `mqtt.client.id` |
 | `MQTT_CONSUMER_TOPICS` | Comma-separated list of target sensor wildcards | `home/+/room,home/+/air,home/+/opening,home/+/presence,home/gateway/status` | `mqtt.consumer.topics` |
 | `MQTT_INITIAL_DELAY_MS` | Starting time frame for back-off reconnect tries | `1000` | `mqtt.initial.delay.ms` |
