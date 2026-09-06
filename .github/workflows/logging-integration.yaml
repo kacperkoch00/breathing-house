@@ -88,7 +88,7 @@ jobs:
               --set image.tag=logging-test \
               --set image.pullPolicy=Never \
               --set env.MQTT_BROKER_IP="mqtt-broker" \
-              --set env.MQTT_BROKER_PORT="1883"
+              --set env.MQTT_BROKER_PORT_NUMBER="1883"
           done
 
       - name: Wait for all service rollouts
