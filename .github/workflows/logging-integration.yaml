@@ -108,8 +108,12 @@ jobs:
           echo "Waiting for application logs to reach Loki..."
 
           for attempt in $(seq 1 30); do
-            response=$(kubectl run loki-query \
+            # -i is required: kubectl rejects --rm unless it is attached to the
+            # container, and without attaching the query output is never captured.
+            response=$(kubectl run "loki-query-$attempt" \
               --rm \
+              -i \
+              --quiet \
               --restart=Never \
               --image=curlimages/curl:8.10.1 \
               -n observability \
@@ -138,6 +142,8 @@ jobs:
 
             response=$(kubectl run "loki-query-$service" \
               --rm \
+              -i \
+              --quiet \
               --restart=Never \
               --image=curlimages/curl:8.10.1 \
               -n observability \
