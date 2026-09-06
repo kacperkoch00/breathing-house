@@ -1,4 +1,4 @@
-package com.breathinghouse.alertnotifier.integrationtests;
+package com.breathinghouse.sensorsdatacollector.integrationtests;
 
 import com.hivemq.client.mqtt.MqttClient;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;

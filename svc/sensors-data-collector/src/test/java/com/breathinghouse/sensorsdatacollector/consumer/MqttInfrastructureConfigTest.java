@@ -1,4 +1,4 @@
-package com.breathinghouse.alertnotifier.consumer;
+package com.breathinghouse.sensorsdatacollector.consumer;
 
 import com.hivemq.client.mqtt.MqttClientConfig;
 import com.hivemq.client.mqtt.lifecycle.MqttClientConnectedContext;
@@ -30,7 +30,7 @@ class MqttInfrastructureConfigTest {
 
     @Test
     void shouldConfigureHiveMqClientWithProperties() {
-        String clientId = "alert-notifier";
+        String clientId = "sensors-data-collector";
         String brokerIp = "192.168.1.50";
         Integer brokerPort = 1883;
         Integer initialDelayMs = 1000;

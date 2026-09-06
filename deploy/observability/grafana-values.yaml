@@ -1,0 +1,16 @@
+adminUser: admin
+persistence:
+  enabled: true
+  size: 2Gi
+service:
+  type: ClusterIP
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki-gateway.observability.svc.cluster.local:80
+        isDefault: true
+        editable: false

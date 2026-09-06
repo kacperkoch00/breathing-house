@@ -1,4 +1,4 @@
-package com.breathinghouse.alertnotifier.consumer;
+package com.breathinghouse.sensorsdatacollector.consumer;
 
 import org.junit.jupiter.api.Test;
 

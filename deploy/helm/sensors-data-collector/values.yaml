@@ -27,6 +27,7 @@ ingress:
 
 env:
   HTTP_PORT: "8083"
+  LOG_LEVEL: "DEBUG"
 
 resources: {}
 

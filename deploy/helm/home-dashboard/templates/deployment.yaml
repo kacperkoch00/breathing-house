@@ -5,6 +5,8 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: breathing-house
+    app.kubernetes.io/component: frontend
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -16,6 +18,8 @@ spec:
       labels:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: breathing-house
+        app.kubernetes.io/component: frontend
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

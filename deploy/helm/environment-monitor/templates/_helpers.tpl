@@ -26,11 +26,22 @@ helm.sh/chart: {{ include "environment-monitor.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/part-of: breathing-house
+app.kubernetes.io/component: backend
 {{- end }}
 
 {{- define "environment-monitor.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "environment-monitor.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "environment-monitor.podLabels" -}}
+{{ include "environment-monitor.selectorLabels" . }}
+app.kubernetes.io/part-of: breathing-house
+app.kubernetes.io/component: backend
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
 {{- end }}
 
 {{- define "environment-monitor.serviceAccountName" -}}
