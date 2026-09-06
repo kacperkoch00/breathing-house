@@ -153,6 +153,8 @@ k8s-deploy:
 			--set image.tag=dev \
 			--set image.pullPolicy=IfNotPresent \
 			--set ingress.enabled=true; \
+		kubectl rollout restart deployment/$(SERVICE); \
+		kubectl rollout status deployment/$(SERVICE) --timeout=120s; \
 	fi
 
 k8s-mqtt: k8s-start
