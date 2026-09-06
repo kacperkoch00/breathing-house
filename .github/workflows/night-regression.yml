@@ -24,7 +24,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
 
-      - name: Create Kind configuration with Ingress and MQTT ports
+      - name: Create Kind configuration with Ingress ports
         run: |
           cat > /tmp/kind-config.yaml <<'EOF'
           kind: Cluster
@@ -38,9 +38,6 @@ jobs:
                 - containerPort: 443
                   hostPort: 443
                   protocol: TCP
-                - containerPort: 1883
-                  hostPort: 1883
-                  protocol: TCP
           EOF
 
       - name: Create Kind cluster
@@ -50,7 +47,7 @@ jobs:
           config: /tmp/kind-config.yaml
 
       - name: Install NGINX Ingress controller
-        run: kubectl apply -f https://githubusercontent.com
+        run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 
       - name: Wait for NGINX Ingress controller
         run: |
@@ -60,15 +57,56 @@ jobs:
 
       - name: Install Mosquitto MQTT 5 Broker
         run: |
-          helm repo add hookdoo https://github.io
-          helm repo update
-          helm upgrade --install mosquitto hookdoo/mosquitto \
-            --set service.main.type=NodePort \
-            --set service.main.ports.mqtt.nodePort=31883 \
-            --set service.main.ports.mqtt.port=1883 \
-            --set persistence.enabled=false \
-            --set config.builtin="listener 1883"$'\n'"allow_anonymous true"
-            
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: mosquitto-config
+          data:
+            mosquitto.conf: |
+              listener 1883
+              allow_anonymous true
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: mosquitto
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: mosquitto
+            template:
+              metadata:
+                labels:
+                  app: mosquitto
+              spec:
+                containers:
+                  - name: mosquitto
+                    image: eclipse-mosquitto:2.0.18
+                    ports:
+                      - containerPort: 1883
+                    volumeMounts:
+                      - name: config
+                        mountPath: /mosquitto/config/mosquitto.conf
+                        subPath: mosquitto.conf
+                volumes:
+                  - name: config
+                    configMap:
+                      name: mosquitto-config
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mosquitto
+          spec:
+            selector:
+              app: mosquitto
+            ports:
+              - port: 1883
+                targetPort: 1883
+          EOF
+
           kubectl rollout status deployment/mosquitto --timeout=120s
 
       - name: Build service images
