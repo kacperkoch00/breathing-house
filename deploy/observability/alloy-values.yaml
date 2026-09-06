@@ -1,6 +1,11 @@
 controller:
   type: daemonset
 alloy:
+  env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
   configMap:
     create: true
     content: |
@@ -13,7 +18,7 @@ alloy:
         role = "pod"
         selectors {
           role = "pod"
-          field = "spec.nodeName=" + coalesce(sys.env("HOSTNAME"), constants.hostname)
+          field = "spec.nodeName=" + sys.env("NODE_NAME")
         }
       }
 
@@ -55,8 +60,6 @@ alloy:
           target_label = "component"
         }
 
-        // Grafana's Loki explore view and most community dashboards key on
-        // "job", conventionally "<namespace>/<app>".
         rule {
           source_labels = [
             "__meta_kubernetes_namespace",

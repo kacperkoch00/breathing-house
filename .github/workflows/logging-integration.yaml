@@ -1,3 +1,4 @@
+```yaml
 name: Kubernetes logging integration
 
 on:
@@ -14,6 +15,7 @@ env:
 jobs:
   logging-integration:
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -44,8 +46,10 @@ jobs:
       - name: Install Loki
         run: |
           kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+
           helm repo add grafana-community https://grafana-community.github.io/helm-charts
           helm repo update
+
           helm upgrade --install loki grafana-community/loki \
             --namespace observability \
             -f deploy/observability/loki-values.yaml
@@ -54,6 +58,7 @@ jobs:
         run: |
           helm repo add grafana https://grafana.github.io/helm-charts
           helm repo update
+
           helm upgrade --install alloy grafana/alloy \
             --namespace observability \
             -f deploy/observability/alloy-values.yaml
@@ -68,21 +73,39 @@ jobs:
             --namespace observability \
             --timeout=180s
 
+      - name: Verify Alloy node configuration
+        run: |
+          echo "Alloy pods:"
+          kubectl get pods -n observability -l app.kubernetes.io/name=alloy -o wide
+
+          alloy_pod=$(kubectl get pods \
+            -n observability \
+            -l app.kubernetes.io/name=alloy \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          echo "Alloy pod: $alloy_pod"
+          echo "Alloy NODE_NAME:"
+          kubectl exec -n observability "$alloy_pod" -- printenv NODE_NAME
+
       - name: Build service images
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            echo "==> Building $service"
             docker build -t "$service:logging-test" "svc/$service"
           done
 
       - name: Load service images into Kind
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            echo "==> Loading $service"
             kind load docker-image "$service:logging-test" --name "$KIND_CLUSTER"
           done
 
       - name: Deploy all services
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            echo "==> Deploying $service"
+
             helm upgrade --install "$service" "deploy/helm/$service" \
               --set image.repository="$service" \
               --set image.tag=logging-test \
@@ -94,6 +117,8 @@ jobs:
       - name: Wait for all service rollouts
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+            echo "==> Waiting for $service"
+
             deployment=$(kubectl get deployment \
               -l "app.kubernetes.io/name=$service" \
               -o jsonpath='{.items[0].metadata.name}')
@@ -103,13 +128,15 @@ jobs:
               --timeout=180s
           done
 
-      - name: Wait for logs to reach Loki
+      - name: Show application pods
+        run: |
+          kubectl get pods -o wide
+
+      - name: Wait for application logs to reach Loki
         run: |
           echo "Waiting for application logs to reach Loki..."
 
           for attempt in $(seq 1 30); do
-            # -i is required: kubectl rejects --rm unless it is attached to the
-            # container, and without attaching the query output is never captured.
             response=$(kubectl run "loki-query-$attempt" \
               --rm \
               -i \
@@ -119,17 +146,28 @@ jobs:
               -n observability \
               -- \
               curl --silent \
-              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query?query=%7Bpart_of%3D%22breathing-house%22%7D" \
+              --get \
+              --data-urlencode 'query={part_of="breathing-house"}' \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
               2>/dev/null || true)
 
             if echo "$response" | grep -q "environment-monitor"; then
               echo "Logs are being received by Loki."
-              break
+              exit 0
             fi
 
             echo "Logs not available yet, attempt $attempt/30..."
             sleep 2
           done
+
+          echo "Logs were not received by Loki."
+          echo "Alloy logs:"
+          kubectl logs -n observability \
+            -l app.kubernetes.io/name=alloy \
+            --all-containers=true \
+            --tail=200 || true
+
+          exit 1
 
       - name: Check logs for all services
         run: |
@@ -149,7 +187,9 @@ jobs:
               -n observability \
               -- \
               curl --silent \
-              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query?query=%7Bapp%3D%22$service%22%7D" \
+              --get \
+              --data-urlencode "query={app=\"$service\"}" \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
               2>/dev/null || true)
 
             if echo "$response" | grep -q '"values"'; then
@@ -167,12 +207,40 @@ jobs:
 
           echo "All services have logs in Loki."
 
+      - name: Verify expected Loki labels
+        run: |
+          response=$(kubectl run loki-label-check \
+            --rm \
+            -i \
+            --quiet \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- \
+            curl --silent \
+            "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/labels" \
+            2>/dev/null || true)
+
+          echo "$response"
+
+          echo "$response" | grep -q '"app"' || {
+            echo "FAIL: Loki does not contain the app label."
+            exit 1
+          }
+
+          echo "$response" | grep -q '"part_of"' || {
+            echo "FAIL: Loki does not contain the part_of label."
+            exit 1
+          }
+
+          echo "PASS: Expected Loki labels are present."
+
       - name: Collect diagnostics
         if: always()
         run: |
           mkdir -p logging-results
 
-          kubectl get pods,deployments,services -A -o wide \
+          kubectl get pods,deployments,daemonsets,services -A -o wide \
             > logging-results/resources.txt
 
           kubectl get events -A --sort-by=.lastTimestamp \
@@ -206,3 +274,4 @@ jobs:
           path: logging-results
           if-no-files-found: error
           retention-days: 30
+```
