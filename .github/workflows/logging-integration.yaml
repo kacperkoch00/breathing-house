@@ -39,27 +39,38 @@ jobs:
 
       - name: Install Mosquitto MQTT broker
         run: |
-          helm upgrade --install mqtt-broker deploy/helm/mqtt-broker
-          kubectl rollout status deployment/mqtt-broker --timeout=120s
+          helm upgrade --install mqtt-broker deploy/helm/mqtt-broker \
+            --wait \
+            --timeout 5m
+
+          kubectl rollout status deployment/mqtt-broker \
+            --timeout=120s
 
       - name: Install Loki
         run: |
-          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          helm repo add grafana-community \
+            https://grafana-community.github.io/helm-charts
 
-          helm repo add grafana-community https://grafana-community.github.io/helm-charts
           helm repo update
 
           helm upgrade --install loki grafana-community/loki \
             --namespace observability \
+            --create-namespace \
+            --wait \
+            --timeout 5m \
             -f deploy/observability/loki-values.yaml
 
       - name: Install Alloy
         run: |
-          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add grafana \
+            https://grafana.github.io/helm-charts
+
           helm repo update
 
           helm upgrade --install alloy grafana/alloy \
             --namespace observability \
+            --wait \
+            --timeout 5m \
             -f deploy/observability/alloy-values.yaml
 
       - name: Wait for observability stack
@@ -72,18 +83,111 @@ jobs:
             --namespace observability \
             --timeout=180s
 
+      - name: Verify observability stack
+        run: |
+          echo "=== Observability pods ==="
+          kubectl get pods \
+            -n observability \
+            -o wide
+
+          echo "=== Observability services ==="
+          kubectl get services \
+            -n observability
+
+          echo "=== Alloy DaemonSet ==="
+          kubectl get daemonset alloy \
+            -n observability \
+            -o wide
+
+          echo "=== Loki Gateway ==="
+          kubectl get deployment loki-gateway \
+            -n observability \
+            -o wide
+
+      - name: Render Alloy Helm chart
+        run: |
+          helm template alloy grafana/alloy \
+            --namespace observability \
+            -f deploy/observability/alloy-values.yaml \
+            > /tmp/alloy-rendered.yaml
+
+          cat /tmp/alloy-rendered.yaml
+
+      - name: Verify Alloy configuration
+        run: |
+          echo "=== Alloy ConfigMaps ==="
+
+          kubectl get configmaps \
+            -n observability \
+            -o yaml
+
+          echo "=== Alloy DaemonSet ==="
+
+          kubectl get daemonset alloy \
+            -n observability \
+            -o yaml
+
+      - name: Verify Alloy Kubernetes permissions
+        run: |
+          alloy_pod=$(kubectl get pods \
+            -n observability \
+            -l app.kubernetes.io/name=alloy \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          service_account=$(kubectl get pod "$alloy_pod" \
+            -n observability \
+            -o jsonpath='{.spec.serviceAccountName}')
+
+          echo "Alloy pod: $alloy_pod"
+          echo "Service account: $service_account"
+
+          echo "=== Can list pods? ==="
+
+          test "$(kubectl auth can-i list pods \
+            --as="system:serviceaccount:observability:$service_account")" = "yes"
+
+          echo "=== Can watch pods? ==="
+
+          test "$(kubectl auth can-i watch pods \
+            --as="system:serviceaccount:observability:$service_account")" = "yes"
+
+          echo "=== Can get pods? ==="
+
+          test "$(kubectl auth can-i get pods \
+            --as="system:serviceaccount:observability:$service_account")" = "yes"
+
+          echo "Alloy has required Kubernetes permissions."
+
+      - name: Check Loki connectivity
+        run: |
+          kubectl run loki-connectivity-check \
+            --rm \
+            -i \
+            --quiet \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- \
+            curl --fail --silent --show-error \
+            "http://loki-gateway.observability.svc.cluster.local/ready"
+
       - name: Build service images
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
             echo "==> Building $service"
-            docker build -t "$service:logging-test" "svc/$service"
+            docker build \
+              -t "$service:logging-test" \
+              "svc/$service"
           done
 
       - name: Load service images into Kind
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
             echo "==> Loading $service"
-            kind load docker-image "$service:logging-test" --name "$KIND_CLUSTER"
+
+            kind load docker-image \
+              "$service:logging-test" \
+              --name "$KIND_CLUSTER"
           done
 
       - name: Deploy all services
@@ -91,12 +195,15 @@ jobs:
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
             echo "==> Deploying $service"
 
-            helm upgrade --install "$service" "deploy/helm/$service" \
+            helm upgrade --install "$service" \
+              "deploy/helm/$service" \
               --set image.repository="$service" \
               --set image.tag=logging-test \
               --set image.pullPolicy=Never \
               --set env.MQTT_BROKER_IP="mqtt-broker" \
-              --set env.MQTT_BROKER_PORT_NUMBER="1883"
+              --set env.MQTT_BROKER_PORT_NUMBER="1883" \
+              --wait \
+              --timeout 5m
           done
 
       - name: Wait for all service rollouts
@@ -115,20 +222,73 @@ jobs:
 
       - name: Show application pods
         run: |
-          kubectl get pods -o wide
+          kubectl get pods \
+            -o wide
+
+      - name: Verify application logs
+        run: |
+          services="environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard"
+
+          failed=0
+
+          for service in $services; do
+            echo "=== $service ==="
+
+            logs=$(kubectl logs \
+              -l "app.kubernetes.io/name=$service" \
+              --all-containers=true \
+              --tail=20 \
+              2>&1 || true)
+
+            echo "$logs"
+
+            if [ -n "$logs" ]; then
+              echo "PASS: $service has Kubernetes container logs."
+            else
+              echo "FAIL: $service has no Kubernetes container logs."
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Application log verification failed."
+            exit 1
+          fi
+
+      - name: Diagnose Alloy
+        run: |
+          echo "=== Alloy pods ==="
+
+          kubectl get pods \
+            -n observability \
+            -l app.kubernetes.io/name=alloy \
+            -o wide
+
+          echo "=== Alloy logs ==="
+
+          kubectl logs \
+            -n observability \
+            -l app.kubernetes.io/name=alloy \
+            --all-containers=true \
+            --tail=300 || true
 
       - name: Wait for application logs to reach Loki
         run: |
           echo "Waiting for application logs to reach Loki..."
 
+          kubectl run loki-query \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- \
+            sleep 120
+
           for attempt in $(seq 1 30); do
-            response=$(kubectl run "loki-query-$attempt" \
-              --rm \
-              -i \
-              --quiet \
-              --restart=Never \
-              --image=curlimages/curl:8.10.1 \
+            echo "Attempt $attempt/30..."
+
+            response=$(kubectl exec \
               -n observability \
+              loki-query \
               -- \
               curl --silent \
               --get \
@@ -136,28 +296,42 @@ jobs:
               "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
               2>/dev/null || true)
 
-            if echo "$response" | grep -q "environment-monitor"; then
-              echo "Logs are being received by Loki."
+            echo "$response"
+
+            if echo "$response" | grep -q '"values"'; then
+              echo "PASS: Logs are being received by Loki."
+
+              kubectl delete pod loki-query \
+                -n observability \
+                --ignore-not-found
+
               exit 0
             fi
 
-            echo "Logs not available yet, attempt $attempt/30..."
             sleep 2
           done
 
-          echo "Logs were not received by Loki."
+          kubectl delete pod loki-query \
+            -n observability \
+            --ignore-not-found
 
-          echo "Alloy logs:"
-          kubectl logs -n observability \
+          echo "FAIL: Logs were not received by Loki."
+
+          echo "=== Alloy logs ==="
+
+          kubectl logs \
+            -n observability \
             -l app.kubernetes.io/name=alloy \
             --all-containers=true \
-            --tail=200 || true
+            --tail=300 || true
 
-          echo "Loki logs:"
-          kubectl logs -n observability \
+          echo "=== Loki logs ==="
+
+          kubectl logs \
+            -n observability \
             -l app.kubernetes.io/name=loki \
             --all-containers=true \
-            --tail=200 || true
+            --tail=300 || true
 
           exit 1
 
@@ -183,6 +357,8 @@ jobs:
               --data-urlencode "query={app=\"$service\"}" \
               "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
               2>/dev/null || true)
+
+            echo "$response"
 
             if echo "$response" | grep -q '"values"'; then
               echo "PASS: $service has logs in Loki."
@@ -232,22 +408,38 @@ jobs:
         run: |
           mkdir -p logging-results
 
-          kubectl get pods,deployments,daemonsets,services -A -o wide \
+          kubectl get pods,deployments,daemonsets,services \
+            -A \
+            -o wide \
             > logging-results/resources.txt
 
-          kubectl get events -A --sort-by=.lastTimestamp \
+          kubectl get events \
+            -A \
+            --sort-by=.lastTimestamp \
             > logging-results/events.txt
 
-          kubectl logs -n observability \
+          kubectl get configmaps \
+            -n observability \
+            -o yaml \
+            > logging-results/configmaps.yaml 2>&1 || true
+
+          kubectl get daemonset alloy \
+            -n observability \
+            -o yaml \
+            > logging-results/alloy-daemonset.yaml 2>&1 || true
+
+          kubectl logs \
+            -n observability \
             -l app.kubernetes.io/name=alloy \
             --all-containers=true \
-            --tail=200 \
+            --tail=300 \
             > logging-results/alloy.log 2>&1 || true
 
-          kubectl logs -n observability \
+          kubectl logs \
+            -n observability \
             -l app.kubernetes.io/name=loki \
             --all-containers=true \
-            --tail=200 \
+            --tail=300 \
             > logging-results/loki.log 2>&1 || true
 
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
