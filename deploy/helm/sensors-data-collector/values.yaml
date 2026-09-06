@@ -6,6 +6,8 @@ image:
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
 serviceAccount:
   create: true
   name: ""
@@ -27,7 +29,7 @@ ingress:
 
 env:
   HTTP_PORT: "8083"
-  LOG_LEVEL: "DEBUG"
+  LOG_LEVEL: "info"
 
 resources: {}
 

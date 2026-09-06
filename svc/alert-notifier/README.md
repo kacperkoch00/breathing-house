@@ -32,13 +32,13 @@ helm upgrade --install alert-notifier deploy/helm/alert-notifier \
 	--set image.tag=0.1.0 \
 	--set image.pullPolicy=IfNotPresent
 
-kubectl rollout status deployment/alert-notifier-alert-notifier
+kubectl rollout status deployment/alert-notifier
 ```
 
 The chart configures port `8082` and uses `/live` and `/ready` for Kubernetes
 probes. Access it locally with:
 
 ```bash
-kubectl port-forward service/alert-notifier-alert-notifier 8082:8082
+kubectl port-forward service/alert-notifier 8082:8082
 curl http://localhost:8082/live
 ```

@@ -63,13 +63,13 @@ helm upgrade --install sensors-data-collector deploy/helm/sensors-data-collector
 	--set image.tag=0.1.0 \
 	--set image.pullPolicy=IfNotPresent
 
-kubectl rollout status deployment/sensors-data-collector-sensors-data-collector
+kubectl rollout status deployment/sensors-data-collector
 ```
 
 The chart configures port `8083` and uses `/live` and `/ready` for Kubernetes
 probes. Access it locally with:
 
 ```bash
-kubectl port-forward service/sensors-data-collector-sensors-data-collector 8083:8083
+kubectl port-forward service/sensors-data-collector 8083:8083
 curl http://localhost:8083/live
 ```

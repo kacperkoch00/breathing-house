@@ -37,14 +37,14 @@ helm upgrade --install environment-monitor deploy/helm/environment-monitor \
   --set image.tag=0.1.0 \
   --set image.pullPolicy=IfNotPresent
 
-kubectl rollout status deployment/environment-monitor-environment-monitor
+kubectl rollout status deployment/environment-monitor
 ```
 
 The chart configures port `8080` and uses `/live` and `/ready` for Kubernetes
 probes. Access it locally with:
 
 ```bash
-kubectl port-forward service/environment-monitor-environment-monitor 8080:8080
+kubectl port-forward service/environment-monitor 8080:8080
 curl http://localhost:8080/live
 ```
 

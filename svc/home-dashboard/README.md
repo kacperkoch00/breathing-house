@@ -36,13 +36,13 @@ helm upgrade --install home-dashboard deploy/helm/home-dashboard \
 	--set image.tag=0.1.0 \
 	--set image.pullPolicy=IfNotPresent
 
-kubectl rollout status deployment/home-dashboard-home-dashboard
+kubectl rollout status deployment/home-dashboard
 ```
 
 The chart exposes the dashboard on port `8080`. Access it locally with:
 
 ```bash
-kubectl port-forward service/home-dashboard-home-dashboard 8080:8080
+kubectl port-forward service/home-dashboard 8080:8080
 ```
 
 Then open `http://localhost:8080` in a browser.
