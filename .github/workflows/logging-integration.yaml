@@ -141,20 +141,22 @@ jobs:
           echo "Alloy pod: $alloy_pod"
           echo "Service account: $service_account"
 
-          echo "=== Can list pods? ==="
+          can_list=$(kubectl auth can-i list pods \
+            --as="system:serviceaccount:observability:$service_account")
 
-          test "$(kubectl auth can-i list pods \
-            --as="system:serviceaccount:observability:$service_account")" = "yes"
+          can_watch=$(kubectl auth can-i watch pods \
+            --as="system:serviceaccount:observability:$service_account")
 
-          echo "=== Can watch pods? ==="
+          can_get=$(kubectl auth can-i get pods \
+            --as="system:serviceaccount:observability:$service_account")
 
-          test "$(kubectl auth can-i watch pods \
-            --as="system:serviceaccount:observability:$service_account")" = "yes"
+          echo "Can list pods: $can_list"
+          echo "Can watch pods: $can_watch"
+          echo "Can get pods: $can_get"
 
-          echo "=== Can get pods? ==="
-
-          test "$(kubectl auth can-i get pods \
-            --as="system:serviceaccount:observability:$service_account")" = "yes"
+          test "$can_list" = "yes"
+          test "$can_watch" = "yes"
+          test "$can_get" = "yes"
 
           echo "Alloy has required Kubernetes permissions."
 
@@ -175,6 +177,7 @@ jobs:
         run: |
           for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
             echo "==> Building $service"
+
             docker build \
               -t "$service:logging-test" \
               "svc/$service"
@@ -293,12 +296,13 @@ jobs:
               curl --silent \
               --get \
               --data-urlencode 'query={part_of="breathing-house"}' \
-              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
+              --data-urlencode 'limit=1' \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query_range" \
               2>/dev/null || true)
 
             echo "$response"
 
-            if echo "$response" | grep -q '"values"'; then
+            if echo "$response" | grep -q '"streams"'; then
               echo "PASS: Logs are being received by Loki."
 
               kubectl delete pod loki-query \
@@ -355,12 +359,13 @@ jobs:
               curl --silent \
               --get \
               --data-urlencode "query={app=\"$service\"}" \
-              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query" \
+              --data-urlencode "limit=1" \
+              "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/query_range" \
               2>/dev/null || true)
 
             echo "$response"
 
-            if echo "$response" | grep -q '"values"'; then
+            if echo "$response" | grep -q '"streams"'; then
               echo "PASS: $service has logs in Loki."
             else
               echo "FAIL: $service has no logs in Loki."
