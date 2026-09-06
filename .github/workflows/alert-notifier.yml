@@ -25,18 +25,6 @@ jobs:
   build-test-integration:
     runs-on: ubuntu-latest
     
-    services:
-      mosquitto:
-        image: eclipse-mosquitto:2.0.18
-        ports:
-          - 1883:1883
-        options: >-
-          --name mosquitto
-          --entrypoint /usr/sbin/mosquitto
-          -c /dev/null 
-          --listener 1883 
-          --allow-anonymous true
-
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -46,6 +34,16 @@ jobs:
           cache: maven
       
       - uses: azure/setup-helm@v5
+
+      - name: Start Mosquitto
+        run: |
+          printf "listener 1883\nallow_anonymous true\n" > /tmp/mosquitto.conf
+          docker run -d \
+            --name mosquitto \
+            -p 1883:1883 \
+            -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2.0.18 \
+            mosquitto -c /mosquitto/config/mosquitto.conf
 
       - name: Test and package
         working-directory: svc/alert-notifier
