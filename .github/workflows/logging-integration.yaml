@@ -1,4 +1,3 @@
-```yaml
 name: Kubernetes logging integration
 
 on:
@@ -274,4 +273,3 @@ jobs:
           path: logging-results
           if-no-files-found: error
           retention-days: 30
-```
