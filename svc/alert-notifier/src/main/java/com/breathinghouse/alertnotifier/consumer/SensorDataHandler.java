@@ -14,6 +14,6 @@ public class SensorDataHandler {
 
     @ServiceActivator(inputChannel = "mqttInputChannel")
     public void handle(String payload, @Header("mqtt_topic") String topic) {
-        log.info("Processing MQTT message. Topic: {}, Payload: {}", topic, payload);
+        log.debug("Processing MQTT message. Topic: {}, Payload: {}", topic, payload);
     }
 }
