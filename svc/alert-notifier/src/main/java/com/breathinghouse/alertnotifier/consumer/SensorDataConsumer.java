@@ -36,7 +36,7 @@ public class SensorDataConsumer {
 
     @PostConstruct
     public void startMqttSubscription() {
-        log.info("Initiating non-blocking background connection to the broker...");
+        log.debug("Initiating non-blocking background connection to the broker...");
 
         hiveMqClient.connect()
                 .thenCompose(connAck -> subscribe())
@@ -47,7 +47,7 @@ public class SensorDataConsumer {
     }
 
     private @NonNull CompletableFuture<Mqtt5SubAck> subscribe() {
-        log.info("Connected to broker via HiveMQ MQTT 5!");
+        log.info("Connected to MQTT broker!");
 
         Mqtt5Subscribe subMessage = Mqtt5Subscribe.builder()
                 .addSubscriptions(sensorDataConsumerConfig.getConsumerTopics().stream()

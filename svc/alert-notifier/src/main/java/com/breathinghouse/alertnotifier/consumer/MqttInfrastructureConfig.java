@@ -41,13 +41,13 @@ public class MqttInfrastructureConfig {
     }
 
     void onDisconnected(MqttClientDisconnectedContext context) {
-        log.warn(
+        log.debug(
                 "Disconnected from MQTT broker. Cause: {}. Reconnect attempt scheduled.",
                 context.getCause().getMessage()
         );
     }
 
     void onConnected(MqttClientConnectedContext context) {
-        log.info("Successfully (re)connected to MQTT broker.");
+        log.debug("Successfully (re)connected to MQTT broker.");
     }
 }
