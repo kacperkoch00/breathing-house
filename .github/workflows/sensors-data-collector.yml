@@ -45,11 +45,53 @@ jobs:
             eclipse-mosquitto:2.0.18 \
             mosquitto -c /mosquitto/config/mosquitto.conf
 
+      - name: Start Kafka
+        run: |
+          docker run -d \
+            --name kafka \
+            -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:4.1.0
+
+      - name: Create Kafka topics
+        run: |
+          until docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1; do
+            sleep 1
+          done
+
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:9092 \
+            --create \
+            --if-not-exists \
+            --topic sensor-data
+
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:9092 \
+            --create \
+            --if-not-exists \
+            --topic event-data
+
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:9092 \
+            --create \
+            --if-not-exists \
+            --topic status-data
+
       - name: Test and package
         working-directory: svc/sensors-data-collector
         env:
           MQTT_BROKER_IP: 127.0.0.1
           MQTT_BROKER_PORT_NUMBER: 1883
+          KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
         run: mvn -B verify
 
       - name: Helm lint

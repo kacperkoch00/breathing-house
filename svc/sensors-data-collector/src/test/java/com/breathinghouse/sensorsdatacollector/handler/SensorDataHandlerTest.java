@@ -6,11 +6,14 @@ import com.breathinghouse.sensorsdatacollector.handler.transformer.PresenceSenso
 import com.breathinghouse.sensorsdatacollector.handler.transformer.RoomSensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.StatusSensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.producer.KafkaProducerConfig;
+import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mockito;
 
 import java.time.Instant;
 import java.util.List;
@@ -25,6 +28,8 @@ class SensorDataHandlerTest {
     @BeforeEach
     void setUp() {
         ObjectMapper mapper = new ObjectMapper();
+        TransformedSensorDataProducer producer = Mockito.mock(TransformedSensorDataProducer.class);
+
         List<SensorDataTransformer> transformers = List.of(
                 new RoomSensorDataTransformer(mapper),
                 new AirSensorDataTransformer(mapper),
@@ -33,7 +38,7 @@ class SensorDataHandlerTest {
                 new StatusSensorDataTransformer(mapper)
         );
 
-        handler = new SensorDataHandler(transformers);
+        handler = new SensorDataHandler(transformers, producer);
     }
 
     @ParameterizedTest
@@ -98,7 +103,8 @@ class SensorDataHandlerTest {
             }
         };
 
-        SensorDataHandler handler = new SensorDataHandler(List.of(transformer));
+        TransformedSensorDataProducer producer = Mockito.mock(TransformedSensorDataProducer.class);
+        SensorDataHandler handler = new SensorDataHandler(List.of(transformer), producer);
 
         assertDoesNotThrow(() ->
                 handler.handle("{}", "home/kitchen/air")

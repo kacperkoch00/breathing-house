@@ -1,6 +1,7 @@
 *** Settings ***
 Library    Collections
 Library    RequestsLibrary
+Library    Process
 
 *** Variables ***
 ${BASE_URL}    http://127.0.0.1
@@ -18,3 +19,47 @@ All services are up and running
         ${response}=    GET On Session    ${service}    ${path}
         Should Be Equal As Integers    ${response.status_code}    200
     END
+
+Sensor data is transferred from MQTT to Kafka
+    ${consumer}=    Start Process
+    ...    kubectl
+    ...    exec
+    ...    deployment/kafka
+    ...    --
+    ...    /opt/kafka/bin/kafka-console-consumer.sh
+    ...    --bootstrap-server
+    ...    kafka:9092
+    ...    --topic
+    ...    sensor-data
+    ...    --group
+    ...    robot-e2e-test
+    ...    --consumer-property
+    ...    auto.offset.reset=latest
+    ...    --timeout-ms
+    ...    15000
+
+    Sleep    2s
+
+    ${result}=    Run Process
+    ...    kubectl
+    ...    exec
+    ...    deployment/mosquitto
+    ...    --
+    ...    mosquitto_pub
+    ...    -h
+    ...    localhost
+    ...    -p
+    ...    1883
+    ...    -t
+    ...    home/e2e-test/air
+    ...    -m
+    ...    {"temperature":22.5}
+
+    Should Be Equal As Integers    ${result.rc}    0
+
+    ${result}=    Wait For Process    ${consumer}    timeout=20s
+    ${kafka_message}=    Set Variable    ${result.stdout}
+
+    Should Contain    ${kafka_message}    "roomId":"e2e-test"
+    Should Contain    ${kafka_message}    "type":"AIR"
+    Should Contain    ${kafka_message}    "temperature":22.5
