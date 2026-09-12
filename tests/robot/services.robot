@@ -33,8 +33,7 @@ ${consumer}=    Start Process
 ...    sensor-data
 ...    --group
 ...    robot-e2e-test
-...    --consumer-property
-...    auto.offset.reset=latest
+...    --from-beginning
 ...    --timeout-ms
 ...    15000
 
