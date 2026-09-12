@@ -2,7 +2,6 @@
 Library    Collections
 Library    RequestsLibrary
 Library    Process
-Library    String
 
 *** Variables ***
 ${BASE_URL}    http://127.0.0.1
@@ -22,8 +21,6 @@ All services are up and running
     END
 
 Sensor data is transferred from MQTT to Kafka
-    ${group}=    Set Variable    robot-e2e-${TEST NAME}
-
     ${consumer}=    Start Process
     ...    kubectl
     ...    exec
@@ -35,9 +32,8 @@ Sensor data is transferred from MQTT to Kafka
     ...    --topic
     ...    sensor-data
     ...    --group
-    ...    ${group}
-    ...    --consumer-property
-    ...    auto.offset.reset=latest
+    ...    robot-e2e-test
+    ...    --from-beginning
     ...    --timeout-ms
     ...    15000
 
