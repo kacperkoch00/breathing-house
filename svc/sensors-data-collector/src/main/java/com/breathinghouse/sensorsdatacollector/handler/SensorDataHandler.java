@@ -1,6 +1,8 @@
 package com.breathinghouse.sensorsdatacollector.handler;
 
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.producer.KafkaProducerConfig;
+import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.integration.annotation.ServiceActivator;
@@ -17,9 +19,11 @@ public class SensorDataHandler {
     private static final Logger log = LoggerFactory.getLogger(SensorDataHandler.class);
 
     private final Map<SensorType, SensorDataTransformer> transformers;
+    private final TransformedSensorDataProducer transformedSensorDataProducer;
 
-    public SensorDataHandler(List<SensorDataTransformer> transformers) {
+    public SensorDataHandler(List<SensorDataTransformer> transformers, TransformedSensorDataProducer transformedSensorDataProducer) {
         this.transformers = new EnumMap<>(SensorType.class);
+        this.transformedSensorDataProducer = transformedSensorDataProducer;
 
         transformers.forEach(transformer ->
                 this.transformers.put(transformer.supportedType(), transformer)
@@ -36,7 +40,6 @@ public class SensorDataHandler {
             log.warn("Ignoring message with invalid MQTT topic: {}", topic);
             return;
         }
-
 
         SensorType sensorType;
 
@@ -61,6 +64,6 @@ public class SensorDataHandler {
                 payload
         );
 
-        transformer.transform(payload, sensorTopic.roomId());
+        transformedSensorDataProducer.send(transformer.transform(payload, sensorTopic.roomId()));
     }
 }

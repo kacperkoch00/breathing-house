@@ -32,7 +32,8 @@ env:
   LOG_LEVEL: "DEBUG"
   MQTT_BROKER_IP: "mqtt-broker"
   MQTT_BROKER_PORT_NUMBER: "1883"
-
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  
 resources: {}
 
 nodeSelector: {}
