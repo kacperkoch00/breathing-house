@@ -40,16 +40,44 @@ jobs:
         run: go test ./...
       - name: Build binary
         run: go build -o /tmp/occupancy-monitor ./cmd/server
+      - name: Start Kafka
+        run: |
+          docker run -d \
+            --name kafka \
+            -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:4.1.0
+
+          for attempt in $(seq 1 30); do
+            if docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:9092 \
+              --list >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
       - name: Integration smoke test
         run: |
-          HTTP_PORT=18081 /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
+          KAFKA_BROKERS=localhost:9092 HTTP_PORT=18081 /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
           pid=$!
           trap 'kill $pid' EXIT
           for attempt in $(seq 1 30); do
-            curl --fail --silent http://127.0.0.1:18081/live && break
+            if curl --fail --silent http://127.0.0.1:18081/ready; then
+              exit 0
+            fi
             sleep 1
           done
-          curl --fail http://127.0.0.1:18081/ready
+          cat /tmp/occupancy-monitor.log
+          exit 1
       - name: Helm lint
         working-directory: .
         run: helm lint deploy/helm/occupancy-monitor
