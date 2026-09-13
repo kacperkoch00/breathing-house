@@ -74,7 +74,7 @@ jobs:
           done
       - name: Integration smoke test
         run: |
-          KAFKA_BROKERS=localhost:9092 HTTP_PORT=18081 /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
+          KAFKA_BROKERS=localhost:9092 HTTP_PORT=18081 LOG_LEVEL=debug /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
           pid=$!
           trap 'kill $pid' EXIT
           for attempt in $(seq 1 30); do
