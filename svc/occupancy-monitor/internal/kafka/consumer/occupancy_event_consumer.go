@@ -10,6 +10,7 @@ import (
 )
 
 type kafkaClient interface {
+	Ping(context.Context) error
 	PollFetches(context.Context) kafkaFetches
 }
 
@@ -20,6 +21,10 @@ type kafkaFetches interface {
 
 type franzKafkaClient struct {
 	client *kgo.Client
+}
+
+func (c *franzKafkaClient) Ping(ctx context.Context) error {
+	return c.client.Ping(ctx)
 }
 
 func (c *franzKafkaClient) PollFetches(ctx context.Context) kafkaFetches {
@@ -41,32 +46,63 @@ func NewKafkaConsumer(brokers []string, topic string, groupID string, logger *za
 	)
 }
 
-func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
-	pollEvents(ctx, &franzKafkaClient{client: client}, logger, retryDelay, readiness)
+func CheckReadiness(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
+	checkKafkaReadiness(
+		ctx,
+		&franzKafkaClient{client: client},
+		logger,
+		retryDelay,
+		readiness,
+	)
 }
 
-func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
+func checkKafkaReadiness(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
 	for {
+		if err := client.Ping(ctx); err == nil {
+			readiness.SetReady(true)
+			logger.Debug("Kafka is ready")
+			return
+		} else {
+			readiness.SetReady(false)
+			logger.Error("Kafka is not ready", zap.Error(err))
+		}
+
+		select {
+		case <-time.After(retryDelay):
+		case <-ctx.Done():
+			readiness.SetReady(false)
+			return
+		}
+	}
+}
+
+func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration) {
+	pollEvents(
+		ctx,
+		&franzKafkaClient{client: client},
+		logger,
+		retryDelay,
+	)
+}
+
+func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration) {
+	for {
+		logger.Debug("polling Kafka")
 		fetches := client.PollFetches(ctx)
+		logger.Debug("Kafka poll returned")
 
 		if ctx.Err() != nil {
-			readiness.SetReady(false)
 			return
 		}
 
 		if !processFetches(fetches, logger) {
-			readiness.SetReady(false)
-
 			select {
 			case <-time.After(retryDelay):
 				continue
 			case <-ctx.Done():
-				readiness.SetReady(false)
 				return
 			}
 		}
-
-		readiness.SetReady(true)
 	}
 }
 

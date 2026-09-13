@@ -63,7 +63,8 @@ func run() error {
 }
 
 func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
-	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay, readiness)
+	go consumer.CheckReadiness(ctx, kafkaConsumer, logger, retryDelay, readiness)
+	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay)
 }
 
 func initialize() (Config, *zap.Logger, error) {
