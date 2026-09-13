@@ -72,6 +72,13 @@ jobs:
 
             sleep 2
           done
+      - name: Create Kafka topic
+        run: |
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:9092 \
+            --create \
+            --if-not-exists \
+            --topic event-data
       - name: Integration smoke test
         run: |
           KAFKA_BROKERS=localhost:9092 HTTP_PORT=18081 LOG_LEVEL=debug /tmp/occupancy-monitor >/tmp/occupancy-monitor.log 2>&1 &
