@@ -12,7 +12,12 @@ import (
 )
 
 type mockKafkaClient struct {
+	ping        func(context.Context) error
 	pollFetches func(context.Context) kafkaFetches
+}
+
+func (m *mockKafkaClient) Ping(ctx context.Context) error {
+	return m.ping(ctx)
 }
 
 func (m *mockKafkaClient) PollFetches(ctx context.Context) kafkaFetches {
@@ -153,8 +158,7 @@ func TestPollEventsStopsWhenContextIsCanceled(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		readiness := handler.NewReadiness()
-		pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+		pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
 		close(done)
 	}()
 
@@ -193,8 +197,7 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 		},
 	}
 
-	readiness := handler.NewReadiness()
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -229,8 +232,7 @@ func TestPollEventsRetriesAfterFetchError(t *testing.T) {
 		},
 	}
 
-	readiness := handler.NewReadiness()
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -257,8 +259,7 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		readiness := handler.NewReadiness()
-		pollEvents(ctx, client, zap.NewNop(), time.Second, readiness)
+		pollEvents(ctx, client, zap.NewNop(), time.Second)
 		close(done)
 	}()
 
@@ -312,10 +313,88 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 		},
 	}
 
-	readiness := handler.NewReadiness()
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
 
 	if pollCount != 3 {
 		t.Fatalf("PollFetches() called %d times, want 3", pollCount)
+	}
+}
+
+func TestCheckKafkaReadiness(t *testing.T) {
+	ctx := context.Background()
+	readiness := handler.NewReadiness()
+
+	client := &mockKafkaClient{
+		ping: func(context.Context) error {
+			return nil
+		},
+	}
+
+	checkKafkaReadiness(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+
+	if !readiness.IsReady() {
+		t.Fatal("readiness = false, want true")
+	}
+}
+
+func TestCheckKafkaReadinessRetriesAfterError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readiness := handler.NewReadiness()
+	pingCount := 0
+
+	client := &mockKafkaClient{
+		ping: func(context.Context) error {
+			pingCount++
+
+			if pingCount == 1 {
+				return errors.New("Kafka unavailable")
+			}
+
+			return nil
+		},
+	}
+
+	checkKafkaReadiness(ctx, client, zap.NewNop(), time.Millisecond, readiness)
+
+	if pingCount != 2 {
+		t.Fatalf("Ping() called %d times, want 2", pingCount)
+	}
+
+	if !readiness.IsReady() {
+		t.Fatal("readiness = false, want true")
+	}
+}
+
+func TestCheckKafkaReadinessStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	readiness := handler.NewReadiness()
+
+	client := &mockKafkaClient{
+		ping: func(context.Context) error {
+			return errors.New("Kafka unavailable")
+		},
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		checkKafkaReadiness(ctx, client, zap.NewNop(), time.Second, readiness)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("checkKafkaReadiness() did not stop")
+	}
+
+	if readiness.IsReady() {
+		t.Fatal("readiness = true, want false")
 	}
 }
