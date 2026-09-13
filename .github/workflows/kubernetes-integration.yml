@@ -258,7 +258,8 @@ jobs:
             --set ingress.hosts[0].paths[0].path=/ \
             --set ingress.hosts[0].paths[0].pathType=Prefix \
             --set env.MQTT_BROKER_IP=mosquitto \
-            --set env.MQTT_BROKER_PORT_NUMBER=1883
+            --set env.MQTT_BROKER_PORT_NUMBER=1883 \
+            --set env.KAFKA_BROKERS=kafka:9092
 
       - name: Install local chart with Ingress for pull request
         if: ${{ !inputs.publish-oci }}
