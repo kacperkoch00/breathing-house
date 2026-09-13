@@ -20,6 +20,19 @@ All services are up and running
         Should Be Equal As Integers    ${response.status_code}    200
     END
 
+All services are ready
+    FOR    ${service}    ${path}    IN
+    ...    environment-monitor    /ready
+    ...    occupancy-monitor    /ready
+    ...    alert-notifier    /ready
+    ...    sensors-data-collector    /ready
+    ...    home-dashboard    /
+        ${headers}=    Create Dictionary    Host=${service}.local
+        Create Session    ${service}    ${BASE_URL}    headers=${headers}
+        ${response}=    GET On Session    ${service}    ${path}
+        Should Be Equal As Integers    ${response.status_code}    200
+    END
+
 Sensor data is transferred from MQTT to Kafka
     ${consumer}=    Start Process
     ...    kubectl
