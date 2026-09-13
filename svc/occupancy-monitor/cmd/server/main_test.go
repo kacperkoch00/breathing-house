@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"occupancy-monitor/internal/handler"
 	"os"
 	"syscall"
 	"testing"
@@ -13,7 +14,10 @@ import (
 )
 
 func TestNewHTTPServerHealthRoutes(t *testing.T) {
-	server := newHTTPServer(Config{HTTPPort: "8081"})
+	readiness := handler.NewReadiness()
+	readiness.SetReady(true)
+
+	server := newHTTPServer(Config{HTTPPort: "8081"}, readiness)
 
 	for _, path := range []string{"/live", "/ready"} {
 		t.Run(path, func(t *testing.T) {
@@ -30,7 +34,9 @@ func TestNewHTTPServerHealthRoutes(t *testing.T) {
 }
 
 func TestNewHTTPServer(t *testing.T) {
-	server := newHTTPServer(Config{HTTPPort: "8081"})
+	readiness := handler.NewReadiness()
+	readiness.SetReady(true)
+	server := newHTTPServer(Config{HTTPPort: "8081"}, readiness)
 
 	if server.Addr != ":8081" {
 		t.Fatalf("Addr = %q, want %q", server.Addr, ":8081")
