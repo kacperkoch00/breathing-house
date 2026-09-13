@@ -47,7 +47,9 @@ func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, ret
 
 func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
 	for {
+		logger.Debug("polling Kafka")
 		fetches := client.PollFetches(ctx)
+		logger.Debug("Kafka poll returned")
 
 		if ctx.Err() != nil {
 			readiness.SetReady(false)
