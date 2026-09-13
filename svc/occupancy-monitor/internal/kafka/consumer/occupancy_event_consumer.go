@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"occupancy-monitor/internal/handler"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -40,26 +41,32 @@ func NewKafkaConsumer(brokers []string, topic string, groupID string, logger *za
 	)
 }
 
-func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration) {
-	pollEvents(ctx, &franzKafkaClient{client: client}, logger, retryDelay)
+func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
+	pollEvents(ctx, &franzKafkaClient{client: client}, logger, retryDelay, readiness)
 }
 
-func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration) {
+func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
 	for {
 		fetches := client.PollFetches(ctx)
 
 		if ctx.Err() != nil {
+			readiness.SetReady(false)
 			return
 		}
 
 		if !processFetches(fetches, logger) {
+			readiness.SetReady(false)
+
 			select {
 			case <-time.After(retryDelay):
 				continue
 			case <-ctx.Done():
+				readiness.SetReady(false)
 				return
 			}
 		}
+
+		readiness.SetReady(true)
 	}
 }
 

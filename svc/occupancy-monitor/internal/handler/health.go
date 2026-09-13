@@ -6,10 +6,14 @@ import (
 	"occupancy-monitor/internal/api"
 )
 
-type Health struct{}
+type Health struct {
+	readiness *Readiness
+}
 
-func NewHealth() *Health {
-	return &Health{}
+func NewHealth(readiness *Readiness) *Health {
+	return &Health{
+		readiness: readiness,
+	}
 }
 
 func (h *Health) GetLive(w http.ResponseWriter, _ *http.Request) {
@@ -17,6 +21,11 @@ func (h *Health) GetLive(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Health) GetReady(w http.ResponseWriter, _ *http.Request) {
+	if !h.readiness.IsReady() {
+		writeHealthResponse(w, http.StatusServiceUnavailable, "NOT READY\n")
+		return
+	}
+
 	writeHealthResponse(w, http.StatusOK, "READY\n")
 }
 

@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"errors"
+	"occupancy-monitor/internal/handler"
 	"testing"
 	"time"
 
@@ -152,7 +153,8 @@ func TestPollEventsStopsWhenContextIsCanceled(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+		readiness := handler.NewReadiness()
+		pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
 		close(done)
 	}()
 
@@ -191,7 +193,8 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	readiness := handler.NewReadiness()
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -226,7 +229,8 @@ func TestPollEventsRetriesAfterFetchError(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	readiness := handler.NewReadiness()
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -253,7 +257,8 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Second)
+		readiness := handler.NewReadiness()
+		pollEvents(ctx, client, zap.NewNop(), time.Second, readiness)
 		close(done)
 	}()
 
@@ -307,7 +312,8 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	readiness := handler.NewReadiness()
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, readiness)
 
 	if pollCount != 3 {
 		t.Fatalf("PollFetches() called %d times, want 3", pollCount)

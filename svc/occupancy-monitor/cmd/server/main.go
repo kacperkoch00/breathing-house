@@ -50,19 +50,20 @@ func run() error {
 	}
 	defer kafkaConsumer.Close()
 
-	server := newHTTPServer(config)
+	readiness := handler.NewReadiness()
+	server := newHTTPServer(config, readiness)
 	serverErrors := startHTTPServer(server, config, logger)
 
 	signalCtx, stopSignals := createSignalContext()
 	defer stopSignals()
 
-	startConsuming(signalCtx, kafkaConsumer, logger, config.KafkaRetryDelay)
+	startConsuming(signalCtx, kafkaConsumer, logger, config.KafkaRetryDelay, readiness)
 
 	return waitForShutdown(signalCtx, serverErrors, server, config, logger)
 }
 
-func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration) {
-	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay)
+func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
+	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay, readiness)
 }
 
 func initialize() (Config, *zap.Logger, error) {
@@ -155,8 +156,8 @@ func loadLogger(config Config) (*zap.Logger, error) {
 	return zapConfig.Build()
 }
 
-func newHTTPServer(config Config) *http.Server {
-	health := handler.NewHealth()
+func newHTTPServer(config Config, readiness *handler.Readiness) *http.Server {
+	health := handler.NewHealth(readiness)
 	mux := http.NewServeMux()
 
 	api.HandlerFromMux(health, mux)
