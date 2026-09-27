@@ -49,6 +49,10 @@ env:
   HTTP_PORT: "8080"
   SHUTDOWN_TIMEOUT: 10s
   LOG_LEVEL: info
+  KAFKA_BROKERS: kafka:9092
+  KAFKA_CONSUMER_TOPIC: sensor-data
+  KAFKA_CONSUMER_GROUP_ID: environment-monitor
+  KAFKA_RETRY_DELAY: 5s
 
 livenessProbe:
   httpGet:

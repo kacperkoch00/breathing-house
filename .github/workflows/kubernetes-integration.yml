@@ -222,6 +222,13 @@ jobs:
             --if-not-exists \
             --topic event-data
 
+          kubectl exec deployment/kafka -- \
+            /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --create \
+            --if-not-exists \
+            --topic sensor-data
+
       - name: Build service image for pull request
         if: ${{ !inputs.publish-oci }}
         run: docker build -t ${{ inputs.service }}:ci svc/${{ inputs.service }}

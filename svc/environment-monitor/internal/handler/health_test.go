@@ -7,15 +7,27 @@ import (
 )
 
 func TestHealthEndpoints(t *testing.T) {
-	h := NewHealth()
+	readiness := NewReadiness()
+	h := NewHealth(readiness)
 
 	tests := []struct {
 		name    string
 		handler http.HandlerFunc
+		status  int
 		body    string
 	}{
-		{name: "live", handler: h.GetLive, body: "OK\n"},
-		{name: "ready", handler: h.GetReady, body: "READY\n"},
+		{
+			name:    "live",
+			handler: h.GetLive,
+			status:  http.StatusOK,
+			body:    "OK\n",
+		},
+		{
+			name:    "ready",
+			handler: h.GetReady,
+			status:  http.StatusServiceUnavailable,
+			body:    "NOT READY\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -25,8 +37,8 @@ func TestHealthEndpoints(t *testing.T) {
 
 			tt.handler(recorder, request)
 
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+			if recorder.Code != tt.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.status)
 			}
 
 			if recorder.Body.String() != tt.body {
@@ -38,4 +50,21 @@ func TestHealthEndpoints(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ready after Kafka becomes healthy", func(t *testing.T) {
+		readiness.SetReady(true)
+
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+		h.GetReady(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+
+		if recorder.Body.String() != "READY\n" {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), "READY\n")
+		}
+	})
 }
