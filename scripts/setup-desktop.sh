@@ -31,6 +31,7 @@ HOSTNAMES=(
 )
 
 log() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 require_bin() {
@@ -217,6 +218,24 @@ install_observability() {
     -n observability \
     -- curl --fail --silent --show-error \
     "http://grafana.observability.svc.cluster.local/api/health"
+
+  log "checking provisioned Breathing House dashboards (non-fatal)"
+  dashboards="$(
+    kubectl run grafana-dashboards-check \
+      --rm -i --quiet --restart=Never \
+      --image=curlimages/curl:8.10.1 \
+      -n observability \
+      -- curl --fail --silent --show-error \
+      -u admin:admin \
+      "http://grafana.observability.svc.cluster.local/api/search?query=Breathing%20House" \
+      || true
+  )"
+  count="$(printf '%s' "${dashboards}" | { grep -o '"uid"' || true; } | wc -l | tr -d ' ')"
+  if [[ "${count:-0}" -lt 5 ]]; then
+    warn "expected ≥5 Breathing House dashboards, found ${count:-0}"
+  else
+    log "found ${count} Breathing House dashboards"
+  fi
 }
 
 print_summary() {
@@ -248,6 +267,12 @@ EOF
 Grafana (namespace=observability):
   login: admin / admin
   Loki and Prometheus datasources are pre-provisioned.
+  Folder "Breathing House" dashboards:
+    - Breathing House / Overview
+    - Breathing House / Environment Monitor
+    - Breathing House / Occupancy Monitor
+    - Breathing House / Sensors Data Collector
+    - Breathing House / Alert Notifier
   Port-forward:
     kubectl -n observability port-forward svc/grafana 3000:80
   Then open http://localhost:3000

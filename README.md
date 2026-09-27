@@ -142,7 +142,7 @@ OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always \
 - `DRIVER` — Minikube driver; unset auto-detects podman then docker
 - `GHCR_TOKEN` — if set, helm registry login + `ghcr-pull-secret`; if unset, assume public images
 - `SKIP_HOSTS=1` — skip `/etc/hosts` update
-- `WITH_OBSERVABILITY=1` — also run `make k8s-observability` (Loki, Alloy, Prometheus, Grafana), wait for Grafana/Prometheus rollouts, and print Grafana access notes (`admin`/`admin`)
+- `WITH_OBSERVABILITY=1` — also run `make k8s-observability` (Loki, Alloy, Prometheus, Grafana + Breathing House dashboards), wait for Grafana/Prometheus rollouts, and print Grafana access notes (`admin`/`admin`)
 
 What it does:
 
@@ -161,6 +161,7 @@ Stop with `make k8s-stop` or delete the cluster with `minikube delete`.
 - Loki + Alloy (log shipping)
 - Prometheus (scrapes backend metrics; no ServiceMonitor CRDs)
 - Grafana with pre-provisioned Loki and Prometheus datasources
+- Provisioned dashboards in folder **Breathing House** from `deploy/observability/dashboards/` (overview + one board per backend service)
 
 Admin login for local/CI is `admin` / `admin` (see `deploy/observability/grafana-values.yaml`).
 
@@ -179,7 +180,10 @@ Access Grafana:
 make k8s-grafana
 kubectl -n observability port-forward svc/grafana 3000:80
 # open http://localhost:3000  (admin / admin)
+# Dashboards → Breathing House
 ```
+
+Dashboards are applied as ConfigMap `breathing-house-dashboards` and mounted by the Grafana chart; rerunning `make k8s-observability` refreshes them. Desktop setup with `WITH_OBSERVABILITY=1` installs the same stack and boards.
 
 ### Access services through Ingress
 
@@ -242,7 +246,7 @@ make k8s-grafana
 
 `make k8s-deploy` depends on `k8s-start`, `k8s-mqtt`, and `k8s-kafka`.
 
-`make k8s-observability` / `make k8s-grafana` installs Loki, Alloy, Prometheus, and Grafana (Prometheus + Loki datasources). `WITH_OBSERVABILITY=1` on the desktop setup script gets the same stack.
+`make k8s-observability` / `make k8s-grafana` installs Loki, Alloy, Prometheus, and Grafana (Prometheus + Loki datasources plus Breathing House dashboards). `WITH_OBSERVABILITY=1` on the desktop setup script gets the same stack.
 
 `make helm-template` and `make helm-package` operate on the selected service.
 Set `SERVICE` to choose the chart, for example:

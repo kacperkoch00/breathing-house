@@ -145,6 +145,11 @@ jobs:
             --timeout 5m \
             -f deploy/observability/prometheus-values.yaml
 
+          kubectl create configmap breathing-house-dashboards \
+            --namespace observability \
+            --from-file=deploy/observability/dashboards/ \
+            --dry-run=client -o yaml | kubectl apply -f -
+
           helm upgrade --install grafana grafana-community/grafana \
             --namespace observability \
             --wait \
@@ -340,6 +345,25 @@ jobs:
             }
 
           echo "PASS: Grafana healthy with Prometheus and Loki datasources."
+
+          echo "=== Grafana /api/search?query=Breathing House ==="
+          search=$(kubectl exec -n observability grafana-check -- \
+            curl --fail --silent --show-error \
+            -u admin:admin \
+            "http://grafana.observability.svc.cluster.local/api/search?query=Breathing%20House")
+          echo "$search"
+
+          for uid in breathing-house-overview environment-monitor occupancy-monitor \
+            sensors-data-collector alert-notifier; do
+            echo "$search" | grep -q "\"uid\":\"$uid\"" || \
+              echo "$search" | grep -q "\"uid\": \"$uid\"" || {
+                echo "FAIL: dashboard uid '$uid' not found in search results"
+                kubectl delete pod grafana-check -n observability --ignore-not-found
+                exit 1
+              }
+          done
+
+          echo "PASS: all 5 Breathing House dashboards are provisioned."
           kubectl delete pod grafana-check -n observability --ignore-not-found
 
       - name: Best-effort check for application metrics

@@ -17,6 +17,21 @@ datasources:
         editable: false
       - name: Prometheus
         type: prometheus
+        uid: prometheus
         access: proxy
         url: http://prometheus-server.observability.svc.cluster.local
         editable: false
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: breathing-house
+        orgId: 1
+        folder: Breathing House
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/breathing-house
+dashboardsConfigMaps:
+  breathing-house: breathing-house-dashboards
