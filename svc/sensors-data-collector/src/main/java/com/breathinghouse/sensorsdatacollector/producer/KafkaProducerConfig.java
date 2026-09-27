@@ -1,6 +1,8 @@
 package com.breathinghouse.sensorsdatacollector.producer;
 
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
@@ -33,6 +35,8 @@ public class KafkaProducerConfig {
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
                 JsonSerializer.class
         );
+        properties.put(ProducerConfig.ACKS_CONFIG, "all");
+        properties.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
 
         return new DefaultKafkaProducerFactory<>(properties);
     }
@@ -42,5 +46,15 @@ public class KafkaProducerConfig {
             ProducerFactory<String, SensorData> producerFactory
     ) {
         return new KafkaTemplate<>(producerFactory);
+    }
+
+    @Bean(destroyMethod = "close")
+    public AdminClient kafkaAdminClient(KafkaProperties kafkaProperties) {
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(
+                AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG,
+                kafkaProperties.getBootstrapServers()
+        );
+        return AdminClient.create(properties);
     }
 }

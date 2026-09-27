@@ -25,9 +25,13 @@ class HealthControllerTest {
     @MockitoBean(answers = Answers.RETURNS_MOCKS)
     private Mqtt5AsyncClient hiveMqClient;
 
+    @MockitoBean
+    private KafkaReadiness kafkaReadiness;
+
     @Test
-    void getHealthWhenMqttIsConnected() throws Exception {
+    void getHealthWhenMqttAndKafkaAreReady() throws Exception {
         when(hiveMqClient.getState()).thenReturn(MqttClientState.CONNECTED);
+        when(kafkaReadiness.isReachable()).thenReturn(true);
 
         mockMvc.perform(get("/live"))
                 .andExpect(status().isOk())
@@ -48,5 +52,15 @@ class HealthControllerTest {
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().string("NOT_READY: MQTT consumer state is DISCONNECTED\n"));
+    }
+
+    @Test
+    void getHealthWhenMqttIsConnectedButKafkaIsUnreachable() throws Exception {
+        when(hiveMqClient.getState()).thenReturn(MqttClientState.CONNECTED);
+        when(kafkaReadiness.isReachable()).thenReturn(false);
+
+        mockMvc.perform(get("/ready"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string("NOT_READY: Kafka is not reachable\n"));
     }
 }

@@ -25,10 +25,22 @@ public class TransformedSensorDataProducer {
 
     public void send(SensorData sensorData) {
         String topic = getTopic(sensorData.type());
+        String key = sensorData.roomId();
 
         log.debug("Sending transformed sensor data to Kafka topic {}: {}", topic, sensorData);
 
-        kafkaTemplate.send(topic, sensorData.roomId(), sensorData);
+        kafkaTemplate.send(topic, key, sensorData).whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("Failed to publish to Kafka topic {} key {}", topic, key, ex);
+                return;
+            }
+            log.debug(
+                    "Published to Kafka topic {} partition {} offset {}",
+                    topic,
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset()
+            );
+        });
     }
 
     private String getTopic(SensorType type) {
