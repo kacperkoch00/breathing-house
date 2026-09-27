@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # Deploy Breathing House on desktop Minikube using newest GHCR images and local charts.
+#
+# Optional env knobs (defaults shown):
+#   OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always
+#   DRIVER=  GH_USER=$OWNER GHCR_TOKEN=
+#   SKIP_HOSTS=0 WITH_OBSERVABILITY=0
+#   MQTT_MODE=in-cluster MQTT_BROKER_IP= MQTT_BROKER_PORT=1883 MQTT_REQUIRE_REACHABLE=0
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +19,10 @@ NAMESPACE="${NAMESPACE:-default}"
 GH_USER="${GH_USER:-${OWNER}}"
 SKIP_HOSTS="${SKIP_HOSTS:-0}"
 WITH_OBSERVABILITY="${WITH_OBSERVABILITY:-0}"
+MQTT_MODE="${MQTT_MODE:-in-cluster}"
+MQTT_BROKER_IP="${MQTT_BROKER_IP:-}"
+MQTT_BROKER_PORT="${MQTT_BROKER_PORT:-1883}"
+MQTT_REQUIRE_REACHABLE="${MQTT_REQUIRE_REACHABLE:-0}"
 
 SERVICES=(
   environment-monitor
@@ -54,6 +64,26 @@ detect_driver() {
   die "need a working podman or docker runtime (or set DRIVER=...)"
 }
 
+validate_mqtt_mode() {
+  case "${MQTT_MODE}" in
+    in-cluster) ;;
+    external)
+      if [[ -z "${MQTT_BROKER_IP}" ]]; then
+        die "MQTT_MODE=external requires MQTT_BROKER_IP (reachable FROM Minikube pods, not host localhost).
+
+Example:
+  podman run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2.0.18
+  MQTT_MODE=external MQTT_BROKER_IP=<host-gateway-or-LAN-IP> ./scripts/setup-desktop.sh
+
+Knobs: MQTT_MODE MQTT_BROKER_IP MQTT_BROKER_PORT MQTT_REQUIRE_REACHABLE"
+      fi
+      ;;
+    *)
+      die "MQTT_MODE must be 'in-cluster' or 'external' (got: ${MQTT_MODE})"
+      ;;
+  esac
+}
+
 check_prerequisites() {
   require_bin kubectl
   require_bin minikube
@@ -81,6 +111,24 @@ start_cluster() {
   log "starting Minikube (driver=${driver})"
   minikube start --driver="${driver}"
   minikube addons enable ingress
+}
+
+probe_external_mqtt() {
+  log "probing MQTT broker reachability from cluster (${MQTT_BROKER_IP}:${MQTT_BROKER_PORT})"
+  if kubectl run mqtt-reachability-check \
+    --rm -i --quiet --restart=Never \
+    --image=busybox:1.36 \
+    --namespace "${NAMESPACE}" \
+    --command -- nc -z -w 5 "${MQTT_BROKER_IP}" "${MQTT_BROKER_PORT}"; then
+    log "MQTT broker reachable from cluster"
+    return
+  fi
+
+  local msg="MQTT broker ${MQTT_BROKER_IP}:${MQTT_BROKER_PORT} not reachable from Minikube pods"
+  if [[ "${MQTT_REQUIRE_REACHABLE}" == "1" ]]; then
+    die "${msg} (MQTT_REQUIRE_REACHABLE=1)"
+  fi
+  warn "${msg}"
 }
 
 install_mqtt() {
@@ -144,6 +192,12 @@ deploy_services() {
     )
     if [[ -n "${GHCR_TOKEN:-}" ]]; then
       helm_args+=(--set "imagePullSecrets[0].name=ghcr-pull-secret")
+    fi
+    if [[ "${service}" == "sensors-data-collector" && "${MQTT_MODE}" == "external" ]]; then
+      helm_args+=(
+        --set "env.MQTT_BROKER_IP=${MQTT_BROKER_IP}"
+        --set "env.MQTT_BROKER_PORT_NUMBER=${MQTT_BROKER_PORT}"
+      )
     fi
     helm "${helm_args[@]}"
     kubectl rollout status "deployment/${service}" --namespace "${NAMESPACE}" --timeout=180s
@@ -261,6 +315,14 @@ Stop cluster:  make k8s-stop
 Delete cluster: minikube delete
 EOF
 
+  if [[ "${MQTT_MODE}" == "external" ]]; then
+    cat <<EOF
+
+MQTT: MQTT_MODE=external → ${MQTT_BROKER_IP}:${MQTT_BROKER_PORT}
+  In-cluster mqtt-broker install was skipped; sensors-data-collector points at the external broker.
+EOF
+  fi
+
   if [[ "${WITH_OBSERVABILITY}" == "1" ]]; then
     cat <<EOF
 
@@ -281,9 +343,17 @@ EOF
 }
 
 main() {
+  validate_mqtt_mode
   check_prerequisites
   start_cluster
-  install_mqtt
+
+  if [[ "${MQTT_MODE}" == "in-cluster" ]]; then
+    install_mqtt
+  else
+    log "MQTT_MODE=external; skipping in-cluster mqtt-broker install"
+    probe_external_mqtt
+  fi
+
   install_kafka
 
   if [[ "${WITH_OBSERVABILITY}" == "1" ]]; then
