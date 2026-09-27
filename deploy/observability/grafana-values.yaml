@@ -1,4 +1,5 @@
 adminUser: admin
+adminPassword: admin
 persistence:
   enabled: true
   size: 2Gi
@@ -13,4 +14,9 @@ datasources:
         access: proxy
         url: http://loki-gateway.observability.svc.cluster.local:80
         isDefault: true
+        editable: false
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-server.observability.svc.cluster.local
         editable: false

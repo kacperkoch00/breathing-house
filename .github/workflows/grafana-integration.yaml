@@ -1,0 +1,421 @@
+name: Kubernetes Grafana metrics integration
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KIND_CLUSTER: breathing-house
+
+jobs:
+  grafana-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Create Kind configuration
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+          EOF
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          config: /tmp/kind-config.yaml
+
+      - name: Install Mosquitto MQTT broker
+        run: |
+          helm upgrade --install mqtt-broker deploy/helm/mqtt-broker \
+            --wait \
+            --timeout 5m
+
+          kubectl rollout status deployment/mqtt-broker \
+            --timeout=120s
+
+      - name: Install Kafka
+        run: |
+          kubectl apply -f - <<'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: kafka
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: kafka
+            template:
+              metadata:
+                labels:
+                  app: kafka
+              spec:
+                containers:
+                  - name: kafka
+                    image: apache/kafka:4.1.0
+                    ports:
+                      - containerPort: 9092
+                      - containerPort: 9093
+                    env:
+                      - name: KAFKA_NODE_ID
+                        value: "1"
+                      - name: KAFKA_PROCESS_ROLES
+                        value: "broker,controller"
+                      - name: KAFKA_LISTENERS
+                        value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+                      - name: KAFKA_ADVERTISED_LISTENERS
+                        value: "PLAINTEXT://kafka:9092"
+                      - name: KAFKA_CONTROLLER_LISTENER_NAMES
+                        value: "CONTROLLER"
+                      - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+                        value: "1@localhost:9093"
+                      - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+                        value: "1"
+                      - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+                        value: "1"
+                      - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+                        value: "1"
+                      - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+                        value: "0"
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: kafka
+          spec:
+            selector:
+              app: kafka
+            ports:
+              - name: kafka
+                port: 9092
+                targetPort: 9092
+          EOF
+
+          kubectl rollout status deployment/kafka --timeout=180s
+
+      - name: Create Kafka topics
+        run: |
+          for topic in sensor-data event-data status-data sensor-data-dlq; do
+            kubectl exec deployment/kafka -- \
+              /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server kafka:9092 \
+              --create \
+              --if-not-exists \
+              --topic "$topic"
+          done
+
+      - name: Install observability stack
+        run: |
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add grafana-community \
+            https://grafana-community.github.io/helm-charts
+          helm repo add prometheus-community \
+            https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+          helm upgrade --install loki grafana-community/loki \
+            --namespace observability \
+            --create-namespace \
+            --wait \
+            --timeout 5m \
+            -f deploy/observability/loki-values.yaml
+
+          helm upgrade --install alloy grafana/alloy \
+            --namespace observability \
+            --wait \
+            --timeout 5m \
+            -f deploy/observability/alloy-values.yaml
+
+          helm upgrade --install prometheus prometheus-community/prometheus \
+            --namespace observability \
+            --wait \
+            --timeout 5m \
+            -f deploy/observability/prometheus-values.yaml
+
+          helm upgrade --install grafana grafana-community/grafana \
+            --namespace observability \
+            --wait \
+            --timeout 5m \
+            -f deploy/observability/grafana-values.yaml
+
+      - name: Wait for Prometheus and Grafana rollouts
+        run: |
+          kubectl rollout status deployment/prometheus-server \
+            --namespace observability \
+            --timeout=180s
+
+          kubectl rollout status deployment/grafana \
+            --namespace observability \
+            --timeout=180s
+
+      - name: Build backend service images
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+            echo "==> Building $service"
+
+            docker build \
+              -t "$service:grafana-test" \
+              "svc/$service"
+          done
+
+      - name: Load backend images into Kind
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+            echo "==> Loading $service"
+
+            kind load docker-image \
+              "$service:grafana-test" \
+              --name "$KIND_CLUSTER"
+          done
+
+      - name: Deploy backend services
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+            echo "==> Deploying $service"
+
+            helm upgrade --install "$service" \
+              "deploy/helm/$service" \
+              --set fullnameOverride="$service" \
+              --set image.repository="$service" \
+              --set image.tag=grafana-test \
+              --set image.pullPolicy=Never \
+              --set env.MQTT_BROKER_IP="mqtt-broker" \
+              --set env.MQTT_BROKER_PORT_NUMBER="1883" \
+              --set env.KAFKA_BOOTSTRAP_SERVERS="kafka:9092" \
+              --set env.KAFKA_BROKERS="kafka:9092" \
+              --wait \
+              --timeout 5m
+          done
+
+      - name: Wait for backend service rollouts
+        run: |
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+            echo "==> Waiting for $service"
+            kubectl rollout status "deployment/$service" --timeout=180s
+          done
+
+      - name: Verify metrics endpoints return 200
+        run: |
+          kubectl run metrics-curl \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -- sleep 300
+
+          kubectl wait --for=condition=Ready pod/metrics-curl --timeout=60s
+
+          failed=0
+          check() {
+            local name="$1"
+            local url="$2"
+            echo "=== $name ($url) ==="
+            if kubectl exec metrics-curl -- \
+              curl --fail --silent --show-error --output /dev/null \
+              --write-out "%{http_code}\n" \
+              "$url"; then
+              echo "PASS: $name metrics endpoint returned 200"
+            else
+              echo "FAIL: $name metrics endpoint did not return 200"
+              failed=1
+            fi
+          }
+
+          check environment-monitor \
+            "http://environment-monitor:8080/metrics"
+          check occupancy-monitor \
+            "http://occupancy-monitor:8081/metrics"
+          check alert-notifier \
+            "http://alert-notifier:8082/actuator/prometheus"
+          check sensors-data-collector \
+            "http://sensors-data-collector:8083/actuator/prometheus"
+
+          kubectl delete pod metrics-curl --ignore-not-found --wait=false
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Metrics endpoint verification failed."
+            exit 1
+          fi
+
+      - name: Wait for Prometheus scrape targets up
+        run: |
+          kubectl run prom-query \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- sleep 300
+
+          kubectl wait --for=condition=Ready \
+            pod/prom-query \
+            -n observability \
+            --timeout=60s
+
+          jobs="environment-monitor occupancy-monitor alert-notifier sensors-data-collector"
+          failed=0
+
+          for attempt in $(seq 1 40); do
+            echo "Attempt $attempt/40..."
+            failed=0
+
+            for job in $jobs; do
+              response=$(kubectl exec -n observability prom-query -- \
+                curl --silent --get \
+                --data-urlencode "query=up{job=\"$job\"}" \
+                "http://prometheus-server.observability.svc.cluster.local/api/v1/query" \
+                2>/dev/null || true)
+
+              echo "$job: $response"
+
+              if echo "$response" | grep -q '"value":\[[0-9.]*,"1"\]'; then
+                echo "PASS: Prometheus up{job=\"$job\"} == 1"
+              else
+                echo "not ready: $job"
+                failed=1
+              fi
+            done
+
+            if [ "$failed" -eq 0 ]; then
+              echo "PASS: All four Prometheus scrape jobs are up."
+              kubectl delete pod prom-query -n observability --ignore-not-found
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          kubectl delete pod prom-query -n observability --ignore-not-found
+          echo "FAIL: Prometheus scrape targets not all up."
+          exit 1
+
+      - name: Verify Grafana health and datasources
+        run: |
+          kubectl run grafana-check \
+            --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- sleep 120
+
+          kubectl wait --for=condition=Ready \
+            pod/grafana-check \
+            -n observability \
+            --timeout=60s
+
+          echo "=== Grafana /api/health ==="
+          health=$(kubectl exec -n observability grafana-check -- \
+            curl --fail --silent --show-error \
+            "http://grafana.observability.svc.cluster.local/api/health")
+          echo "$health"
+          echo "$health" | grep -qi 'ok'
+
+          echo "=== Grafana /api/datasources ==="
+          datasources=$(kubectl exec -n observability grafana-check -- \
+            curl --fail --silent --show-error \
+            -u admin:admin \
+            "http://grafana.observability.svc.cluster.local/api/datasources")
+          echo "$datasources"
+
+          echo "$datasources" | grep -q '"name":"Prometheus"' || \
+            echo "$datasources" | grep -q '"name": "Prometheus"' || {
+              echo "FAIL: Prometheus datasource missing"
+              kubectl delete pod grafana-check -n observability --ignore-not-found
+              exit 1
+            }
+
+          echo "$datasources" | grep -q '"name":"Loki"' || \
+            echo "$datasources" | grep -q '"name": "Loki"' || {
+              echo "FAIL: Loki datasource missing"
+              kubectl delete pod grafana-check -n observability --ignore-not-found
+              exit 1
+            }
+
+          echo "PASS: Grafana healthy with Prometheus and Loki datasources."
+          kubectl delete pod grafana-check -n observability --ignore-not-found
+
+      - name: Best-effort check for application metrics
+        continue-on-error: true
+        run: |
+          kubectl run prom-metrics-check \
+            --rm -i --quiet --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -n observability \
+            -- \
+            curl --silent --get \
+            --data-urlencode 'query={__name__=~"kafka_messages_received_total|kafka_fetch_errors_total|jvm_memory_used_bytes|process_uptime_seconds"}' \
+            "http://prometheus-server.observability.svc.cluster.local/api/v1/query" \
+            | tee /tmp/prom-app-metrics.json
+
+          if grep -Eq 'kafka_messages_received_total|kafka_fetch_errors_total|jvm_memory_used_bytes|process_uptime_seconds' \
+            /tmp/prom-app-metrics.json; then
+            echo "PASS: Found at least one application/JVM metric series."
+          else
+            echo "WARN: No application metric series yet (traffic optional)."
+            exit 1
+          fi
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p grafana-results
+
+          kubectl get pods,deployments,daemonsets,services \
+            -A \
+            -o wide \
+            > grafana-results/resources.txt
+
+          kubectl get events \
+            -A \
+            --sort-by=.lastTimestamp \
+            > grafana-results/events.txt
+
+          kubectl logs \
+            -n observability \
+            -l app.kubernetes.io/name=grafana \
+            --all-containers=true \
+            --tail=300 \
+            > grafana-results/grafana.log 2>&1 || true
+
+          kubectl logs \
+            -n observability \
+            -l app.kubernetes.io/name=prometheus \
+            --all-containers=true \
+            --tail=300 \
+            > grafana-results/prometheus.log 2>&1 || true
+
+          kubectl logs \
+            -n observability \
+            -l app.kubernetes.io/name=loki \
+            --all-containers=true \
+            --tail=200 \
+            > grafana-results/loki.log 2>&1 || true
+
+          kubectl logs deployment/kafka \
+            --tail=200 \
+            > grafana-results/kafka.log 2>&1 || true
+
+          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+            kubectl logs \
+              -l "app.kubernetes.io/name=$service" \
+              --all-containers=true \
+              --tail=200 \
+              > "grafana-results/$service.log" 2>&1 || true
+          done
+
+      - name: Upload Grafana diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: grafana-integration-results-${{ github.run_number }}
+          path: grafana-results
+          if-no-files-found: error
+          retention-days: 30
