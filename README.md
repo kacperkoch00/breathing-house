@@ -136,6 +136,8 @@ Optional env knobs (defaults shown):
 OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always \
   DRIVER=          GH_USER="$OWNER" GHCR_TOKEN= \
   SKIP_HOSTS=0 WITH_OBSERVABILITY=0 \
+  MQTT_MODE=in-cluster MQTT_BROKER_IP= MQTT_BROKER_PORT=1883 \
+  MQTT_REQUIRE_REACHABLE=0 \
   ./scripts/setup-desktop.sh
 ```
 
@@ -143,11 +145,31 @@ OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always \
 - `GHCR_TOKEN` — if set, helm registry login + `ghcr-pull-secret`; if unset, assume public images
 - `SKIP_HOSTS=1` — skip `/etc/hosts` update
 - `WITH_OBSERVABILITY=1` — also run `make k8s-observability` (Loki, Alloy, Prometheus, Grafana + Breathing House dashboards), wait for Grafana/Prometheus rollouts, and print Grafana access notes (`admin`/`admin`)
+- `MQTT_MODE` — `in-cluster` (default: helm-install `mqtt-broker`) or `external` (skip in-cluster broker; point `sensors-data-collector` at a host broker)
+- `MQTT_BROKER_IP` / `MQTT_BROKER_PORT` — required when `MQTT_MODE=external`; address must be reachable **from Minikube pods** (not host `localhost`)
+- `MQTT_REQUIRE_REACHABLE=1` — after cluster start, fail if a short-lived probe pod cannot TCP-connect to the external broker (default: warn only)
+
+#### External MQTT (host Podman/Docker)
+
+Default desktop setup still installs in-cluster Mosquitto. To use a broker on the host instead:
+
+```bash
+podman run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2.0.18
+
+MQTT_MODE=external MQTT_BROKER_IP=host.docker.internal ./scripts/setup-desktop.sh
+```
+
+`host.docker.internal` works for some Docker Desktop setups; WSL2/Minikube often need the Minikube host gateway or a LAN IP instead. Pick an address that pods can reach, then verify:
+
+```bash
+kubectl run -it --rm --restart=Never mqtt-debug --image=busybox:1.36 -- \
+  nc -z -vw 5 "$MQTT_BROKER_IP" "${MQTT_BROKER_PORT:-1883}"
+```
 
 What it does:
 
 - Starts Minikube and enables Ingress
-- Installs MQTT and Kafka the same way as `make k8s-mqtt` / `make k8s-kafka`
+- Installs MQTT (`make k8s-mqtt`) unless `MQTT_MODE=external`, and always installs Kafka (`make k8s-kafka`)
 - Deploys all five services from `ghcr.io/$OWNER/<service>:$IMAGE_TAG` with `*.local` Ingress hosts
 - Optionally updates `/etc/hosts` with the Minikube IP and the five hostnames
 - Curls backend `/live` and dashboard `/` through Ingress, then prints URLs
