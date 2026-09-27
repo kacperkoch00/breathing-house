@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -33,7 +32,7 @@ public class AirSensorDataTransformer implements SensorDataTransformer {
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
-            return new SensorData(roomId, SensorType.AIR, Instant.now(), values);
+            return SensorDataFactory.create(roomId, SensorType.AIR, values);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid air sensor payload: " + payload, e);
         }

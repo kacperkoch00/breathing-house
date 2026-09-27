@@ -37,9 +37,12 @@ class RoomSensorDataTransformerTest {
 
         SensorData result = transformer.transform(payload, "kitchen");
 
+        assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
         assertEquals("kitchen", result.roomId());
+        assertNull(result.deviceId());
         assertEquals(SensorType.ROOM, result.type());
-        assertNotNull(result.timestamp());
+        assertNotNull(result.observedAt());
+        assertNotNull(result.receivedAt());
         assertEquals(22.5, result.values().get("temperature"));
         assertEquals(45.2, result.values().get("humidity"));
         assertEquals(320, result.values().get("light"));
@@ -147,7 +150,35 @@ class RoomSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetTimestampDuringTransformation() {
+    void shouldUseObservedAtFromIsoTimestamp() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "timestamp": "2024-01-15T10:30:00Z"
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
+    }
+
+    @Test
+    void shouldUseObservedAtFromEpochMillis() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "timestamp": 1704312600000
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
+    }
+
+    @Test
+    void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
                     "temperature": 22.5,
@@ -161,7 +192,23 @@ class RoomSensorDataTransformerTest {
 
         Instant after = Instant.now();
 
-        assertFalse(result.timestamp().isBefore(before));
-        assertFalse(result.timestamp().isAfter(after));
+        assertFalse(result.observedAt().isBefore(before));
+        assertFalse(result.observedAt().isAfter(after));
+        assertFalse(result.receivedAt().isBefore(before));
+        assertFalse(result.receivedAt().isAfter(after));
+    }
+
+    @Test
+    void shouldSetDeviceIdWhenPresent() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "deviceId": "room-sensor-1"
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals("room-sensor-1", result.deviceId());
     }
 }

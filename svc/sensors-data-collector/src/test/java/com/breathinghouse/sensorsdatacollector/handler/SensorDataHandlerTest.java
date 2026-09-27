@@ -94,10 +94,14 @@ class SensorDataHandlerTest {
 
             @Override
             public SensorData transform(String payload, String roomId) {
+                Instant now = Instant.now();
                 return new SensorData(
+                        SensorData.SCHEMA_VERSION,
                         roomId,
+                        null,
                         SensorType.ROOM,
-                        Instant.now(),
+                        now,
+                        now,
                         Map.of()
                 );
             }
