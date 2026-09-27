@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class HealthController {
     private final Mqtt5AsyncClient hiveMqClient;
+    private final KafkaReadiness kafkaReadiness;
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_PLAIN_VALUE)
     public String live() {
@@ -23,12 +24,18 @@ public class HealthController {
     public ResponseEntity<String> ready() {
         MqttClientState currentState = hiveMqClient.getState();
 
-        if (currentState == MqttClientState.CONNECTED) {
-            return ResponseEntity.ok("READY\n");
+        if (currentState != MqttClientState.CONNECTED) {
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("NOT_READY: MQTT consumer state is " + currentState + "\n");
         }
 
-        return ResponseEntity
-                .status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body("NOT_READY: MQTT consumer state is " + currentState + "\n");
+        if (!kafkaReadiness.isReachable()) {
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("NOT_READY: Kafka is not reachable\n");
+        }
+
+        return ResponseEntity.ok("READY\n");
     }
 }

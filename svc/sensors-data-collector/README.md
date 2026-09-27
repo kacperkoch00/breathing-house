@@ -5,6 +5,8 @@ from the MQTT broker, transforms it into a common sensor data model, and
 publishes the transformed data to Kafka.
 
 The service listens on port `8083` by default and exposes health endpoints.
+`/live` is always up when the process is running. `/ready` requires both an
+MQTT `CONNECTED` state and a successful Kafka cluster probe (2s timeout).
 
 ```bash
 mvn -B test
@@ -105,7 +107,7 @@ kubectl rollout status deployment/sensors-data-collector
 ```
 
 The chart configures port `8083` and uses `/live` and `/ready` for Kubernetes
-probes.
+probes. Ready probes depend on MQTT connectivity and Kafka reachability.
 
 Access it locally with:
 
