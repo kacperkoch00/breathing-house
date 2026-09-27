@@ -14,6 +14,7 @@ svc/                         Service source code
 deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
 deploy/observability/        Loki, Alloy, and Grafana Helm values
 tests/robot/                 Robot Framework night-regression suite
+scripts/                     Desktop Minikube setup using GHCR images
 Makefile                     Repository-wide build and deployment commands
 .github/workflows/           Independent CI workflow per service (+ shared workflows)
 docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
@@ -114,6 +115,44 @@ done
 
 Omit `imagePullSecrets[0].name=ghcr-pull-secret` when the images are public.
 The NGINX Ingress controller is enabled by `make k8s-start` for Minikube.
+
+### Desktop setup script (GHCR latest)
+
+One-shot desktop Minikube install that pulls the newest GHCR images and installs
+the **local** charts under `deploy/helm/<service>` (not OCI chart pull, and not
+`make build-all` / local `localhost/*:dev` images).
+
+Prerequisites: `kubectl`, `minikube`, `helm`, and a working `podman` or `docker`.
+
+From the repository root:
+
+```bash
+./scripts/setup-desktop.sh
+```
+
+Optional env knobs (defaults shown):
+
+```bash
+OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always \
+  DRIVER=          GH_USER="$OWNER" GHCR_TOKEN= \
+  SKIP_HOSTS=0 WITH_OBSERVABILITY=0 \
+  ./scripts/setup-desktop.sh
+```
+
+- `DRIVER` — Minikube driver; unset auto-detects podman then docker
+- `GHCR_TOKEN` — if set, helm registry login + `ghcr-pull-secret`; if unset, assume public images
+- `SKIP_HOSTS=1` — skip `/etc/hosts` update
+- `WITH_OBSERVABILITY=1` — also run `make k8s-observability`
+
+What it does:
+
+- Starts Minikube and enables Ingress
+- Installs MQTT and Kafka the same way as `make k8s-mqtt` / `make k8s-kafka`
+- Deploys all five services from `ghcr.io/$OWNER/<service>:$IMAGE_TAG` with `*.local` Ingress hosts
+- Optionally updates `/etc/hosts` with the Minikube IP and the five hostnames
+- Curls backend `/live` and dashboard `/` through Ingress, then prints URLs
+
+Stop with `make k8s-stop` or delete the cluster with `minikube delete`.
 
 ### Access services through Ingress
 
