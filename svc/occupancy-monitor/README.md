@@ -20,6 +20,21 @@ OpenAPI source is in `openapi.yaml`. Regenerate the typed server with
 `make generate` from this directory (or from the repo root:
 `make generate` / `make generate-service SERVICE=occupancy-monitor`).
 
+## Metrics
+
+Prometheus metrics are exposed at `GET /metrics`. Custom `/live` and `/ready`
+are unchanged. Grafana dashboards and ServiceMonitor CRDs are out of scope;
+scrape `/metrics` only.
+
+| Counter | Labels | When |
+| :------ | :----- | :--- |
+| `kafka_messages_received_total` | `topic` | Once per Kafka record in `processFetches` |
+| `kafka_fetch_errors_total` | `topic` | Once per Kafka fetch error in `EachError` |
+
+```bash
+curl http://localhost:8081/metrics
+```
+
 ## Configuration
 
 | Variable | Default | Notes |

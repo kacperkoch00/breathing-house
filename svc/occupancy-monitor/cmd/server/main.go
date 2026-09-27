@@ -13,8 +13,11 @@ import (
 	"occupancy-monitor/internal/api"
 	"occupancy-monitor/internal/handler"
 	"occupancy-monitor/internal/kafka/consumer"
+	"occupancy-monitor/internal/metrics"
 
 	"github.com/kelseyhightower/envconfig"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -51,20 +54,21 @@ func run() error {
 	defer kafkaConsumer.Close()
 
 	readiness := handler.NewReadiness()
+	kafkaMetrics := metrics.NewKafka(prometheus.DefaultRegisterer)
 	server := newHTTPServer(config, readiness)
 	serverErrors := startHTTPServer(server, config, logger)
 
 	signalCtx, stopSignals := createSignalContext()
 	defer stopSignals()
 
-	startConsuming(signalCtx, kafkaConsumer, logger, config.KafkaRetryDelay, readiness)
+	startConsuming(signalCtx, kafkaConsumer, logger, config.KafkaRetryDelay, readiness, kafkaMetrics)
 
 	return waitForShutdown(signalCtx, serverErrors, server, config, logger)
 }
 
-func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness) {
+func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness, kafkaMetrics *metrics.Kafka) {
 	go consumer.CheckReadiness(ctx, kafkaConsumer, logger, retryDelay, readiness)
-	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay)
+	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay, kafkaMetrics)
 }
 
 func initialize() (Config, *zap.Logger, error) {
@@ -162,6 +166,7 @@ func newHTTPServer(config Config, readiness *handler.Readiness) *http.Server {
 	mux := http.NewServeMux()
 
 	api.HandlerFromMux(health, mux)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	return &http.Server{
 		Addr:              ":" + config.HTTPPort,

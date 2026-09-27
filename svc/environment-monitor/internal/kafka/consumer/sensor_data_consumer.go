@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"environment-monitor/internal/handler"
+	"environment-monitor/internal/metrics"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -76,16 +77,17 @@ func checkKafkaReadiness(ctx context.Context, client kafkaClient, logger *zap.Lo
 	}
 }
 
-func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration) {
+func PollEvents(ctx context.Context, client *kgo.Client, logger *zap.Logger, retryDelay time.Duration, kafkaMetrics *metrics.Kafka) {
 	pollEvents(
 		ctx,
 		&franzKafkaClient{client: client},
 		logger,
 		retryDelay,
+		kafkaMetrics,
 	)
 }
 
-func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration) {
+func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, retryDelay time.Duration, kafkaMetrics *metrics.Kafka) {
 	for {
 		logger.Debug("polling Kafka")
 		fetches := client.PollFetches(ctx)
@@ -95,7 +97,7 @@ func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, ret
 			return
 		}
 
-		if !processFetches(fetches, logger) {
+		if !processFetches(fetches, logger, kafkaMetrics) {
 			select {
 			case <-time.After(retryDelay):
 				continue
@@ -106,11 +108,12 @@ func pollEvents(ctx context.Context, client kafkaClient, logger *zap.Logger, ret
 	}
 }
 
-func processFetches(fetches kafkaFetches, logger *zap.Logger) bool {
+func processFetches(fetches kafkaFetches, logger *zap.Logger, kafkaMetrics *metrics.Kafka) bool {
 	hasError := false
 
 	fetches.EachError(func(topic string, partition int32, err error) {
 		hasError = true
+		kafkaMetrics.FetchError(topic)
 		logger.Error(
 			"Kafka fetch failed",
 			zap.String("topic", topic),
@@ -124,6 +127,7 @@ func processFetches(fetches kafkaFetches, logger *zap.Logger) bool {
 	}
 
 	fetches.EachRecord(func(record *kgo.Record) {
+		kafkaMetrics.MessageReceived(record.Topic)
 		logger.Debug(
 			"Kafka event received",
 			zap.String("topic", record.Topic),

@@ -19,7 +19,7 @@ func TestNewHTTPServerHealthRoutes(t *testing.T) {
 
 	server := newHTTPServer(Config{HTTPPort: "8080"}, readiness)
 
-	for _, path := range []string{"/live", "/ready"} {
+	for _, path := range []string{"/live", "/ready", "/metrics"} {
 		t.Run(path, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, path, nil)
