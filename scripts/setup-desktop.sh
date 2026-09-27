@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Deploy Breathing House on desktop Minikube using newest GHCR images and local charts.
 #
+# Default MQTT is a host Mosquitto container (Raspberry Pi stand-in). Collector pods
+# reach it via host.minikube.internal; publish from the host with
+# scripts/publish-sensor-event.sh (localhost:1883).
+#
 # Optional env knobs (defaults shown):
 #   OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always
 #   DRIVER=  GH_USER=$OWNER GHCR_TOKEN=
 #   SKIP_HOSTS=0 WITH_OBSERVABILITY=0
-#   MQTT_MODE=in-cluster MQTT_BROKER_IP= MQTT_BROKER_PORT=1883 MQTT_REQUIRE_REACHABLE=0
+#   MQTT_MODE=external MQTT_BROKER_IP=host.minikube.internal MQTT_BROKER_PORT=1883
+#   MQTT_REQUIRE_REACHABLE=0 MQTT_CONTAINER_NAME=breathing-house-mosquitto
+#   MQTT_IMAGE=eclipse-mosquitto:2.0.18
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,10 +25,12 @@ NAMESPACE="${NAMESPACE:-default}"
 GH_USER="${GH_USER:-${OWNER}}"
 SKIP_HOSTS="${SKIP_HOSTS:-0}"
 WITH_OBSERVABILITY="${WITH_OBSERVABILITY:-0}"
-MQTT_MODE="${MQTT_MODE:-in-cluster}"
-MQTT_BROKER_IP="${MQTT_BROKER_IP:-}"
+MQTT_MODE="${MQTT_MODE:-external}"
+MQTT_BROKER_IP="${MQTT_BROKER_IP:-host.minikube.internal}"
 MQTT_BROKER_PORT="${MQTT_BROKER_PORT:-1883}"
 MQTT_REQUIRE_REACHABLE="${MQTT_REQUIRE_REACHABLE:-0}"
+MQTT_CONTAINER_NAME="${MQTT_CONTAINER_NAME:-breathing-house-mosquitto}"
+MQTT_IMAGE="${MQTT_IMAGE:-eclipse-mosquitto:2.0.18}"
 
 SERVICES=(
   environment-monitor
@@ -71,11 +79,11 @@ validate_mqtt_mode() {
       if [[ -z "${MQTT_BROKER_IP}" ]]; then
         die "MQTT_MODE=external requires MQTT_BROKER_IP (reachable FROM Minikube pods, not host localhost).
 
-Example:
-  podman run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2.0.18
-  MQTT_MODE=external MQTT_BROKER_IP=<host-gateway-or-LAN-IP> ./scripts/setup-desktop.sh
+Default desktop path starts a host Mosquitto container and uses
+MQTT_BROKER_IP=host.minikube.internal. Override if pods cannot reach that address.
 
-Knobs: MQTT_MODE MQTT_BROKER_IP MQTT_BROKER_PORT MQTT_REQUIRE_REACHABLE"
+Knobs: MQTT_MODE MQTT_BROKER_IP MQTT_BROKER_PORT MQTT_REQUIRE_REACHABLE
+       MQTT_CONTAINER_NAME MQTT_IMAGE"
       fi
       ;;
     *)
@@ -111,6 +119,31 @@ start_cluster() {
   log "starting Minikube (driver=${driver})"
   minikube start --driver="${driver}"
   minikube addons enable ingress
+}
+
+ensure_host_mqtt() {
+  local runtime conf running
+  runtime="$(detect_driver)"
+  conf="${SCRIPT_DIR}/mosquitto/mosquitto.conf"
+  [[ -f "${conf}" ]] || die "missing Mosquitto config: ${conf}"
+
+  if "${runtime}" inspect "${MQTT_CONTAINER_NAME}" >/dev/null 2>&1; then
+    running="$("${runtime}" inspect -f '{{.State.Running}}' "${MQTT_CONTAINER_NAME}")"
+    if [[ "${running}" == "true" ]]; then
+      log "reusing running host MQTT container ${MQTT_CONTAINER_NAME}"
+      return
+    fi
+    log "starting stopped host MQTT container ${MQTT_CONTAINER_NAME}"
+    "${runtime}" start "${MQTT_CONTAINER_NAME}" >/dev/null
+    return
+  fi
+
+  log "starting host MQTT broker (${runtime} ${MQTT_IMAGE} as ${MQTT_CONTAINER_NAME})"
+  "${runtime}" run -d \
+    --name "${MQTT_CONTAINER_NAME}" \
+    -p 1883:1883 \
+    -v "${conf}:/mosquitto/config/mosquitto.conf:ro" \
+    "${MQTT_IMAGE}" >/dev/null
 }
 
 probe_external_mqtt() {
@@ -318,8 +351,18 @@ EOF
   if [[ "${MQTT_MODE}" == "external" ]]; then
     cat <<EOF
 
-MQTT: MQTT_MODE=external → ${MQTT_BROKER_IP}:${MQTT_BROKER_PORT}
-  In-cluster mqtt-broker install was skipped; sensors-data-collector points at the external broker.
+MQTT: host Mosquitto (Pi stand-in), MQTT_MODE=external
+  Container: ${MQTT_CONTAINER_NAME}
+  Publish from host: localhost:1883
+  Collector pods use: ${MQTT_BROKER_IP}:${MQTT_BROKER_PORT}
+  In-cluster mqtt-broker install was skipped.
+  Example publish:
+    ./scripts/publish-sensor-event.sh air
+EOF
+  else
+    cat <<EOF
+
+MQTT: MQTT_MODE=in-cluster (helm mqtt-broker)
 EOF
   fi
 
@@ -350,7 +393,8 @@ main() {
   if [[ "${MQTT_MODE}" == "in-cluster" ]]; then
     install_mqtt
   else
-    log "MQTT_MODE=external; skipping in-cluster mqtt-broker install"
+    log "MQTT_MODE=external; ensuring host MQTT and skipping in-cluster mqtt-broker"
+    ensure_host_mqtt
     probe_external_mqtt
   fi
 
