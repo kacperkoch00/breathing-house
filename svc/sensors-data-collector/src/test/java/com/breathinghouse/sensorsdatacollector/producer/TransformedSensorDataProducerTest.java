@@ -2,6 +2,8 @@ package com.breathinghouse.sensorsdatacollector.producer;
 
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
+import com.breathinghouse.sensorsdatacollector.metrics.SensorMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +21,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -32,6 +35,7 @@ class TransformedSensorDataProducerTest {
     @Mock
     private KafkaTemplate<String, SensorData> kafkaTemplate;
 
+    private SimpleMeterRegistry meterRegistry;
     private TransformedSensorDataProducer producer;
 
     @BeforeEach
@@ -42,8 +46,12 @@ class TransformedSensorDataProducerTest {
                 "status-data",
                 "sensor-data-dlq"
         );
-
-        producer = new TransformedSensorDataProducer(kafkaTemplate, topicProperties);
+        meterRegistry = new SimpleMeterRegistry();
+        producer = new TransformedSensorDataProducer(
+                kafkaTemplate,
+                topicProperties,
+                new SensorMetrics(meterRegistry)
+        );
     }
 
     @ParameterizedTest
@@ -64,6 +72,8 @@ class TransformedSensorDataProducerTest {
         producer.send(sensorData);
 
         verify(kafkaTemplate).send(expectedTopic, "kitchen", sensorData);
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.PUBLISHED, "type", type.name()).count());
+        assertEquals(0.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "sensor").count());
     }
 
     @Test
@@ -76,6 +86,8 @@ class TransformedSensorDataProducerTest {
         assertDoesNotThrow(() -> producer.send(sensorData));
 
         verify(kafkaTemplate).send("sensor-data", "kitchen", sensorData);
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "sensor").count());
+        assertEquals(0.0, meterRegistry.counter(SensorMetrics.PUBLISHED, "type", "ROOM").count());
     }
 
     @SuppressWarnings("unchecked")

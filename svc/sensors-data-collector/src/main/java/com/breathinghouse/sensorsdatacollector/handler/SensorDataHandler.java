@@ -1,6 +1,7 @@
 package com.breathinghouse.sensorsdatacollector.handler;
 
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.metrics.SensorMetrics;
 import com.breathinghouse.sensorsdatacollector.producer.PoisonMessage;
 import com.breathinghouse.sensorsdatacollector.producer.PoisonMessageProducer;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
@@ -23,15 +24,18 @@ public class SensorDataHandler {
     private final Map<SensorType, SensorDataTransformer> transformers;
     private final TransformedSensorDataProducer transformedSensorDataProducer;
     private final PoisonMessageProducer poisonMessageProducer;
+    private final SensorMetrics metrics;
 
     public SensorDataHandler(
             List<SensorDataTransformer> transformers,
             TransformedSensorDataProducer transformedSensorDataProducer,
-            PoisonMessageProducer poisonMessageProducer
+            PoisonMessageProducer poisonMessageProducer,
+            SensorMetrics metrics
     ) {
         this.transformers = new EnumMap<>(SensorType.class);
         this.transformedSensorDataProducer = transformedSensorDataProducer;
         this.poisonMessageProducer = poisonMessageProducer;
+        this.metrics = metrics;
 
         transformers.forEach(transformer ->
                 this.transformers.put(transformer.supportedType(), transformer)
@@ -46,6 +50,7 @@ public class SensorDataHandler {
             sensorTopic = SensorTopic.parse(topic);
         } catch (IllegalArgumentException e) {
             log.warn("Ignoring message with invalid MQTT topic: {}", topic);
+            metrics.ignored("invalid_topic");
             return;
         }
 
@@ -55,6 +60,7 @@ public class SensorDataHandler {
             sensorType = SensorType.from(sensorTopic.sensorType());
         } catch (IllegalArgumentException e) {
             log.warn("Ignoring message with unknown sensor type: {}", sensorTopic.sensorType());
+            metrics.ignored("unknown_type");
             return;
         }
 
@@ -62,6 +68,7 @@ public class SensorDataHandler {
 
         if (transformer == null) {
             log.warn("No transformer registered for sensor type: {}", sensorType);
+            metrics.ignored("no_transformer");
             return;
         }
 
@@ -71,6 +78,8 @@ public class SensorDataHandler {
                 sensorType,
                 payload
         );
+
+        metrics.received(sensorType);
 
         try {
             transformedSensorDataProducer.send(transformer.transform(payload, sensorTopic.roomId()));
@@ -82,6 +91,7 @@ public class SensorDataHandler {
                     e.getMessage(),
                     payload
             );
+            metrics.rejected(sensorType);
             poisonMessageProducer.send(new PoisonMessage(
                     Instant.now(),
                     topic,

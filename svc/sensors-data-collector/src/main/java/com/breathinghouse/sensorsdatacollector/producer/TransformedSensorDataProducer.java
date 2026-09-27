@@ -2,6 +2,7 @@ package com.breathinghouse.sensorsdatacollector.producer;
 
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
+import com.breathinghouse.sensorsdatacollector.metrics.SensorMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -14,13 +15,16 @@ public class TransformedSensorDataProducer {
 
     private final KafkaTemplate<String, SensorData> kafkaTemplate;
     private final KafkaTopicProperties topicProperties;
+    private final SensorMetrics metrics;
 
     public TransformedSensorDataProducer(
             KafkaTemplate<String, SensorData> kafkaTemplate,
-            KafkaTopicProperties topicProperties
+            KafkaTopicProperties topicProperties,
+            SensorMetrics metrics
     ) {
         this.kafkaTemplate = kafkaTemplate;
         this.topicProperties = topicProperties;
+        this.metrics = metrics;
     }
 
     public void send(SensorData sensorData) {
@@ -32,8 +36,10 @@ public class TransformedSensorDataProducer {
         kafkaTemplate.send(topic, key, sensorData).whenComplete((result, ex) -> {
             if (ex != null) {
                 log.error("Failed to publish to Kafka topic {} key {}", topic, key, ex);
+                metrics.publishFailed("sensor");
                 return;
             }
+            metrics.published(sensorData.type());
             log.debug(
                     "Published to Kafka topic {} partition {} offset {}",
                     topic,
