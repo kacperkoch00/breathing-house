@@ -216,7 +216,9 @@ k8s-observability: k8s-start
 	helm upgrade --install grafana grafana-community/grafana \
 		--namespace observability \
 		-f deploy/observability/grafana-values.yaml
-	kubectl rollout restart deployment/grafana --namespace observability
 	kubectl rollout status deployment/grafana --namespace observability --timeout=180s
+	# Chart/env adminPassword is not always applied to an existing SQLite user; force local default.
+	kubectl exec --namespace observability deploy/grafana -- \
+		grafana cli admin reset-admin-password admin
 
 k8s-grafana: k8s-observability

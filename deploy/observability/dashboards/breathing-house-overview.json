@@ -106,7 +106,9 @@
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -140,7 +142,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -166,12 +169,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job, topic) (rate(kafka_messages_received_total{job=~\"environment-monitor|occupancy-monitor\"}[5m]))",
+          "expr": "sum by (job, topic) (increase(kafka_messages_received_total{job=~\"environment-monitor|occupancy-monitor\"}[5m]))",
           "legendFormat": "{{job}} / {{topic}}",
           "refId": "A"
         }
       ],
-      "title": "Kafka messages received",
+      "title": "Kafka messages received (5m)",
       "type": "timeseries"
     },
     {
@@ -187,7 +190,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -213,12 +217,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job, topic) (rate(kafka_fetch_errors_total{job=~\"environment-monitor|occupancy-monitor\"}[5m]))",
+          "expr": "sum by (job, topic) (increase(kafka_fetch_errors_total{job=~\"environment-monitor|occupancy-monitor\"}[5m]))",
           "legendFormat": "{{job}} / {{topic}}",
           "refId": "A"
         }
       ],
-      "title": "Kafka fetch errors",
+      "title": "Kafka fetch errors (5m)",
       "type": "timeseries"
     },
     {
@@ -234,7 +238,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -260,7 +265,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_received_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_received_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "received {{type}}",
           "refId": "A"
         },
@@ -269,12 +274,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_published_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_published_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "published {{type}}",
           "refId": "B"
         }
       ],
-      "title": "Sensor messages received / published",
+      "title": "Sensor messages received / published (5m)",
       "type": "timeseries"
     },
     {
@@ -290,7 +295,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -316,7 +322,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_rejected_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_rejected_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "rejected {{type}}",
           "refId": "A"
         },
@@ -325,7 +331,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (reason) (rate(sensor_messages_ignored_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (reason) (increase(sensor_messages_ignored_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "ignored {{reason}}",
           "refId": "B"
         },
@@ -334,12 +340,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (kind) (rate(sensor_publish_failed_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (kind) (increase(sensor_publish_failed_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "publish failed {{kind}}",
           "refId": "C"
         }
       ],
-      "title": "Sensor pipeline issues",
+      "title": "Sensor pipeline issues (5m)",
       "type": "timeseries"
     },
     {
@@ -394,7 +400,9 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["breathing-house"],
+  "tags": [
+    "breathing-house"
+  ],
   "templating": {
     "list": []
   },

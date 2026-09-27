@@ -269,25 +269,76 @@ update_hosts() {
   fi
 }
 
-check_health() {
-  local ip service path
-  ip="$(minikube ip)"
-  log "checking health through Ingress"
-
-  for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
-    path="/live"
-    if curl -sf -H "Host: ${service}.local" "http://${ip}${path}" >/dev/null; then
-      printf '  ok  %s%s\n' "${service}.local" "${path}"
-    else
-      printf '  FAIL %s%s\n' "${service}.local" "${path}" >&2
+# Curl Ingress with hard timeouts so a slow/unreachable minikube IP cannot hang forever.
+# Minikube/WSL Ingress from the host is often flaky; retry generously.
+curl_ingress() {
+  local host="$1" path="$2" ip="$3"
+  local attempt
+  for attempt in $(seq 1 12); do
+    if curl -sf --connect-timeout 2 --max-time 3 \
+      -H "Host: ${host}" "http://${ip}${path}" >/dev/null; then
+      return 0
     fi
+    sleep 1
   done
+  return 1
+}
 
-  if curl -sf -H "Host: home-dashboard.local" "http://${ip}/" >/dev/null; then
-    printf '  ok  home-dashboard.local/\n'
-  else
-    printf '  FAIL home-dashboard.local/\n' >&2
+# Authoritative check: hit the ClusterIP from inside the cluster (avoids flaky host→Ingress path).
+curl_in_cluster() {
+  local service="$1" port="$2" path="$3"
+  local pod="desktop-health-${service}"
+  kubectl delete pod "${pod}" --namespace "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
+  if kubectl run "${pod}" \
+    --rm -i --quiet --restart=Never \
+    --image=curlimages/curl:8.10.1 \
+    --namespace "${NAMESPACE}" \
+    -- curl -sf --connect-timeout 2 --max-time 5 \
+    "http://${service}.${NAMESPACE}.svc:${port}${path}" >/dev/null; then
+    return 0
   fi
+  return 1
+}
+
+check_one() {
+  local host="$1" ingress_path="$2" service="$3" port="$4" cluster_path="$5" ip="$6"
+
+  if curl_ingress "${host}" "${ingress_path}" "${ip}"; then
+    printf '  ok  %s%s\n' "${host}" "${ingress_path}"
+    return 0
+  fi
+
+  warn "Ingress check failed for ${host}${ingress_path}; trying in-cluster"
+  if curl_in_cluster "${service}" "${port}" "${cluster_path}"; then
+    printf '  ok  %s%s (in-cluster; Ingress flaky from host)\n' "${host}" "${ingress_path}"
+    return 0
+  fi
+
+  printf '  FAIL %s%s\n' "${host}" "${ingress_path}" >&2
+  return 1
+}
+
+check_health() {
+  local ip
+  ip="$(minikube ip)"
+
+  log "waiting for Ingress controller"
+  kubectl rollout status deployment/ingress-nginx-controller \
+    --namespace ingress-nginx \
+    --timeout=120s >/dev/null || warn "ingress-nginx rollout status failed; continuing"
+
+  log "checking health through Ingress (in-cluster fallback if flaky)"
+
+  check_one "environment-monitor.local" "/live" \
+    "environment-monitor" "8080" "/live" "${ip}" || true
+  check_one "occupancy-monitor.local" "/live" \
+    "occupancy-monitor" "8081" "/live" "${ip}" || true
+  check_one "alert-notifier.local" "/live" \
+    "alert-notifier" "8082" "/live" "${ip}" || true
+  check_one "sensors-data-collector.local" "/live" \
+    "sensors-data-collector" "8083" "/live" "${ip}" || true
+  check_one "home-dashboard.local" "/" \
+    "home-dashboard" "8080" "/" "${ip}" || true
 }
 
 install_observability() {

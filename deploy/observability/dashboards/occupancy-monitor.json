@@ -73,7 +73,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -107,7 +109,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -133,12 +136,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (topic) (rate(kafka_messages_received_total{job=\"occupancy-monitor\"}[5m]))",
+          "expr": "sum by (topic) (increase(kafka_messages_received_total{job=\"occupancy-monitor\"}[5m]))",
           "legendFormat": "{{topic}}",
           "refId": "A"
         }
       ],
-      "title": "Kafka messages received",
+      "title": "Kafka messages received (5m)",
       "type": "timeseries"
     },
     {
@@ -154,7 +157,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -180,18 +184,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (topic) (rate(kafka_fetch_errors_total{job=\"occupancy-monitor\"}[5m]))",
+          "expr": "sum by (topic) (increase(kafka_fetch_errors_total{job=\"occupancy-monitor\"}[5m]))",
           "legendFormat": "{{topic}}",
           "refId": "A"
         }
       ],
-      "title": "Kafka fetch errors",
+      "title": "Kafka fetch errors (5m)",
       "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["breathing-house", "occupancy-monitor"],
+  "tags": [
+    "breathing-house",
+    "occupancy-monitor"
+  ],
   "templating": {
     "list": []
   },

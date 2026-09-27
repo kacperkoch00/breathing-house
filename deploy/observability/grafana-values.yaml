@@ -1,8 +1,9 @@
 adminUser: admin
 adminPassword: admin
+# Disabled for local Minikube: RWO PVC + RollingUpdate/restart deadlocks, and a
+# persisted DB can keep an old admin password that ignores values.yaml.
 persistence:
-  enabled: true
-  size: 2Gi
+  enabled: false
 service:
   type: ClusterIP
 datasources:

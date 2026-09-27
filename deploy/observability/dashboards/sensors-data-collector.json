@@ -73,7 +73,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -107,7 +109,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -133,12 +136,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_received_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_received_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
       ],
-      "title": "Messages received",
+      "title": "Messages received (5m)",
       "type": "timeseries"
     },
     {
@@ -154,7 +157,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -180,12 +184,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_published_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_published_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
       ],
-      "title": "Messages published",
+      "title": "Messages published (5m)",
       "type": "timeseries"
     },
     {
@@ -201,7 +205,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -227,7 +232,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (type) (rate(sensor_messages_rejected_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (type) (increase(sensor_messages_rejected_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "rejected {{type}}",
           "refId": "A"
         },
@@ -236,12 +241,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (reason) (rate(sensor_messages_ignored_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (reason) (increase(sensor_messages_ignored_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "ignored {{reason}}",
           "refId": "B"
         }
       ],
-      "title": "Rejected / ignored",
+      "title": "Rejected / ignored (5m)",
       "type": "timeseries"
     },
     {
@@ -257,7 +262,8 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -283,18 +289,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (kind) (rate(sensor_publish_failed_total{job=\"sensors-data-collector\"}[5m]))",
+          "expr": "sum by (kind) (increase(sensor_publish_failed_total{job=\"sensors-data-collector\"}[5m]))",
           "legendFormat": "{{kind}}",
           "refId": "A"
         }
       ],
-      "title": "Publish failures",
+      "title": "Publish failures (5m)",
       "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["breathing-house", "sensors-data-collector"],
+  "tags": [
+    "breathing-house",
+    "sensors-data-collector"
+  ],
   "templating": {
     "list": []
   },
