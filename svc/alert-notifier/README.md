@@ -12,6 +12,16 @@ curl http://localhost:8082/ready
 
 The service listens on port `8082` by default.
 
+## Metrics
+
+JVM and Micrometer metrics are exposed for Prometheus scraping at
+`GET /actuator/prometheus`. Custom `/live` and `/ready` are unchanged. Grafana
+dashboards and ServiceMonitor CRDs are out of scope; scrape the actuator path only.
+
+```bash
+curl http://localhost:8082/actuator/prometheus
+```
+
 ## Container image
 
 From the repository root (images are built with **podman**):

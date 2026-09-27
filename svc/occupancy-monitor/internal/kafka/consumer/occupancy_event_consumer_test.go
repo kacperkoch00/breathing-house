@@ -4,12 +4,20 @@ import (
 	"context"
 	"errors"
 	"occupancy-monitor/internal/handler"
+	"occupancy-monitor/internal/metrics"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.uber.org/zap"
 )
+
+func newTestKafkaMetrics() *metrics.Kafka {
+	return metrics.NewKafka(prometheus.NewRegistry())
+}
 
 type mockKafkaClient struct {
 	ping        func(context.Context) error
@@ -81,7 +89,7 @@ func TestProcessFetchesWithRecord(t *testing.T) {
 		},
 	}
 
-	got := processFetches(fetches, logger)
+	got := processFetches(fetches, logger, newTestKafkaMetrics())
 
 	if !got {
 		t.Fatal("processFetches() = false, want true")
@@ -93,7 +101,7 @@ func TestProcessFetchesWithoutRecords(t *testing.T) {
 
 	fetches := &mockKafkaFetches{}
 
-	got := processFetches(fetches, logger)
+	got := processFetches(fetches, logger, newTestKafkaMetrics())
 
 	if !got {
 		t.Fatal("processFetches() = false, want true")
@@ -113,7 +121,7 @@ func TestProcessFetchesWithError(t *testing.T) {
 		},
 	}
 
-	got := processFetches(fetches, logger)
+	got := processFetches(fetches, logger, newTestKafkaMetrics())
 
 	if got {
 		t.Fatal("processFetches() = true, want false")
@@ -138,7 +146,7 @@ func TestProcessFetchesWithMultipleErrors(t *testing.T) {
 		},
 	}
 
-	got := processFetches(fetches, logger)
+	got := processFetches(fetches, logger, newTestKafkaMetrics())
 
 	if got {
 		t.Fatal("processFetches() = true, want false")
@@ -158,14 +166,14 @@ func TestPollEventsStopsWhenContextIsCanceled(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+		pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("pollEvents() did not stop")
+		t.Fatal("pollEvents(, newTestKafkaMetrics()) did not stop")
 	}
 }
 
@@ -197,7 +205,7 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -232,7 +240,7 @@ func TestPollEventsRetriesAfterFetchError(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -259,7 +267,7 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Second)
+		pollEvents(ctx, client, zap.NewNop(), time.Second, newTestKafkaMetrics())
 		close(done)
 	}()
 
@@ -269,7 +277,7 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("pollEvents() did not stop during retry delay")
+		t.Fatal("pollEvents(, newTestKafkaMetrics()) did not stop during retry delay")
 	}
 }
 
@@ -313,7 +321,7 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond)
+	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
 
 	if pollCount != 3 {
 		t.Fatalf("PollFetches() called %d times, want 3", pollCount)
@@ -396,5 +404,58 @@ func TestCheckKafkaReadinessStopsWhenContextIsCanceled(t *testing.T) {
 
 	if readiness.IsReady() {
 		t.Fatal("readiness = true, want false")
+	}
+}
+
+
+func TestProcessFetchesIncrementsMessagesReceived(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	kafkaMetrics := metrics.NewKafka(reg)
+	logger := zap.NewNop()
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{
+			{Topic: "event-data", Partition: 0, Value: []byte(`{"occupancy":true}`)},
+			{Topic: "event-data", Partition: 0, Value: []byte(`{"occupancy":false}`)},
+		},
+	}
+
+	if !processFetches(fetches, logger, kafkaMetrics) {
+		t.Fatal("processFetches() = false, want true")
+	}
+
+	expected := `
+# HELP kafka_messages_received_total Total Kafka records received by the consumer
+# TYPE kafka_messages_received_total counter
+kafka_messages_received_total{topic="event-data"} 2
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(expected), "kafka_messages_received_total"); err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+}
+
+func TestProcessFetchesIncrementsFetchErrors(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	kafkaMetrics := metrics.NewKafka(reg)
+	logger := zap.NewNop()
+
+	fetches := &mockKafkaFetches{
+		errors: []kafkaFetchError{
+			{topic: "event-data", partition: 0, err: errors.New("first error")},
+			{topic: "event-data", partition: 1, err: errors.New("second error")},
+		},
+	}
+
+	if processFetches(fetches, logger, kafkaMetrics) {
+		t.Fatal("processFetches() = true, want false")
+	}
+
+	expected := `
+# HELP kafka_fetch_errors_total Total Kafka fetch errors observed by the consumer
+# TYPE kafka_fetch_errors_total counter
+kafka_fetch_errors_total{topic="event-data"} 2
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(expected), "kafka_fetch_errors_total"); err != nil {
+		t.Fatalf("metrics: %v", err)
 	}
 }
