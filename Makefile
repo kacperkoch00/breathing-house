@@ -1,4 +1,4 @@
-.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-deploy k8s-observability k8s-mqtt k8s-kafka
+.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-load-service k8s-deploy k8s-deploy-service k8s-observability k8s-mqtt k8s-kafka
 
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
@@ -7,7 +7,6 @@ IMAGE ?= localhost/$(SERVICE):dev
 IMAGE_REPOSITORY ?= localhost/$(SERVICE)
 OPENAPI_SERVICES ?= environment-monitor occupancy-monitor
 JAVA_SERVICES := alert-notifier sensors-data-collector
-IMAGE_SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
 SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
 DIFF_BASE ?= HEAD~1
 K8S_RELEASE ?= $(SERVICE)
@@ -63,7 +62,7 @@ image:
 	podman build -t $(IMAGE) $(SERVICE_DIR)
 
 images:
-	@for service in $(IMAGE_SERVICES); do \
+	@for service in $(SERVICES); do \
 		echo "==> building $$service"; \
 		podman build -t localhost/$$service:dev svc/$$service; \
 	done
@@ -127,96 +126,48 @@ k8s-load:
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> loading image for $$service"; \
-			$(MAKE) k8s-load SERVICE=$$service IMAGE=localhost/$$service:dev; \
+			$(MAKE) k8s-load-service SERVICE=$$service IMAGE=localhost/$$service:dev; \
 		done; \
 	else \
-		if podman image exists "$(IMAGE)" 2>/dev/null; then \
-			podman save -o /tmp/$(SERVICE).tar "$(IMAGE)"; \
-			minikube image load /tmp/$(SERVICE).tar; \
-			rm -f /tmp/$(SERVICE).tar; \
-		else \
-			echo "Image '$(IMAGE)' not found locally; run 'make build SERVICE=$(SERVICE)' first."; \
-			exit 1; \
-		fi; \
+		$(MAKE) k8s-load-service; \
+	fi
+
+k8s-load-service:
+	@if podman image exists "$(IMAGE)" 2>/dev/null; then \
+		podman save -o /tmp/$(SERVICE).tar "$(IMAGE)"; \
+		minikube image load /tmp/$(SERVICE).tar; \
+		rm -f /tmp/$(SERVICE).tar; \
+	else \
+		echo "Image '$(IMAGE)' not found locally; run 'make build SERVICE=$(SERVICE)' first."; \
+		exit 1; \
 	fi
 
 k8s-deploy: k8s-start k8s-mqtt k8s-kafka
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> deploying $$service"; \
-			$(MAKE) k8s-deploy SERVICE=$$service K8S_RELEASE=$$service IMAGE_REPOSITORY=localhost/$$service; \
+			$(MAKE) k8s-deploy-service SERVICE=$$service K8S_RELEASE=$$service IMAGE_REPOSITORY=localhost/$$service; \
 		done; \
 	else \
-		helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
-			--set fullnameOverride=$(SERVICE) \
-			--set image.repository=$(IMAGE_REPOSITORY) \
-			--set image.tag=dev \
-			--set image.pullPolicy=IfNotPresent \
-			--set ingress.enabled=true \
-			--set env.KAFKA_BOOTSTRAP_SERVERS=kafka:9092; \
-		kubectl rollout restart deployment/$(SERVICE); \
-		kubectl rollout status deployment/$(SERVICE) --timeout=120s; \
+		$(MAKE) k8s-deploy-service; \
 	fi
+
+k8s-deploy-service:
+	helm upgrade --install $(K8S_RELEASE) deploy/helm/$(SERVICE) \
+		--set fullnameOverride=$(SERVICE) \
+		--set image.repository=$(IMAGE_REPOSITORY) \
+		--set image.tag=dev \
+		--set image.pullPolicy=IfNotPresent \
+		--set ingress.enabled=true
+	kubectl rollout restart deployment/$(SERVICE)
+	kubectl rollout status deployment/$(SERVICE) --timeout=120s
 
 k8s-mqtt: k8s-start
 	helm upgrade --install mqtt-broker deploy/helm/mqtt-broker
 	kubectl rollout status deployment/mqtt-broker --timeout=120s
 
 k8s-kafka: k8s-start
-	@printf '%s\n' \
-		'apiVersion: apps/v1' \
-		'kind: Deployment' \
-		'metadata:' \
-		'  name: kafka' \
-		'spec:' \
-		'  replicas: 1' \
-		'  selector:' \
-		'    matchLabels:' \
-		'      app: kafka' \
-		'  template:' \
-		'    metadata:' \
-		'      labels:' \
-		'        app: kafka' \
-		'    spec:' \
-		'      containers:' \
-		'        - name: kafka' \
-		'          image: apache/kafka:4.1.0' \
-		'          ports:' \
-		'            - containerPort: 9092' \
-		'            - containerPort: 9093' \
-		'          env:' \
-		'            - name: KAFKA_NODE_ID' \
-		'              value: "1"' \
-		'            - name: KAFKA_PROCESS_ROLES' \
-		'              value: "broker,controller"' \
-		'            - name: KAFKA_LISTENERS' \
-		'              value: "PLAINTEXT://:9092,CONTROLLER://:9093"' \
-		'            - name: KAFKA_ADVERTISED_LISTENERS' \
-		'              value: "PLAINTEXT://localhost:9092"' \
-		'            - name: KAFKA_CONTROLLER_LISTENER_NAMES' \
-		'              value: "CONTROLLER"' \
-		'            - name: KAFKA_CONTROLLER_QUORUM_VOTERS' \
-		'              value: "1@localhost:9093"' \
-		'            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR' \
-		'              value: "1"' \
-		'            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR' \
-		'              value: "1"' \
-		'            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR' \
-		'              value: "1"' \
-		'            - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS' \
-		'              value: "0"' \
-		'---' \
-		'apiVersion: v1' \
-		'kind: Service' \
-		'metadata:' \
-		'  name: kafka' \
-		'spec:' \
-		'  selector:' \
-		'    app: kafka' \
-		'  ports:' \
-		'    - name: kafka' \
-		'      port: 9092' \
-		'      targetPort: 9092' | kubectl apply -f -
+	kubectl apply -f deploy/k8s/kafka.yaml
 	kubectl rollout status deployment/kafka --timeout=180s
 	kubectl exec deployment/kafka -- \
 		/opt/kafka/bin/kafka-topics.sh \

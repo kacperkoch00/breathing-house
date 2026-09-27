@@ -19,7 +19,7 @@ Makefile                     Repository-wide build and deployment commands
 docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
 ```
 
-Kafka for local Kubernetes is installed by `make k8s-kafka` (inline manifests), not a Helm chart. MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
+Kafka for local Kubernetes is installed by `make k8s-kafka` from `deploy/k8s/kafka.yaml`, not a Helm chart. MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
 
 ## Services
 
