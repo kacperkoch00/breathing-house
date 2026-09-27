@@ -1,4 +1,4 @@
-.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-load-service k8s-deploy k8s-deploy-service k8s-observability k8s-mqtt k8s-kafka
+.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-load-service k8s-deploy k8s-deploy-service k8s-observability k8s-grafana k8s-mqtt k8s-kafka
 
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
@@ -198,6 +198,7 @@ k8s-observability: k8s-start
 	@kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
 	helm repo add grafana https://grafana.github.io/helm-charts
 	helm repo add grafana-community https://grafana-community.github.io/helm-charts
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 	helm repo update
 	helm upgrade --install loki grafana-community/loki \
 		--namespace observability \
@@ -205,6 +206,11 @@ k8s-observability: k8s-start
 	helm upgrade --install alloy grafana/alloy \
 		--namespace observability \
 		-f deploy/observability/alloy-values.yaml
+	helm upgrade --install prometheus prometheus-community/prometheus \
+		--namespace observability \
+		-f deploy/observability/prometheus-values.yaml
 	helm upgrade --install grafana grafana-community/grafana \
 		--namespace observability \
 		-f deploy/observability/grafana-values.yaml
+
+k8s-grafana: k8s-observability

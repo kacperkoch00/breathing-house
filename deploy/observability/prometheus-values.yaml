@@ -1,0 +1,45 @@
+# Scrape targets assume backend services run in the `default` namespace
+# (desktop Minikube / Kind CI). Adjust hosts if you deploy elsewhere.
+server:
+  replicaCount: 1
+  retention: "12h"
+  persistentVolume:
+    enabled: false
+
+alertmanager:
+  enabled: false
+
+prometheus-pushgateway:
+  enabled: false
+
+prometheus-node-exporter:
+  enabled: false
+
+kube-state-metrics:
+  enabled: false
+
+extraScrapeConfigs: |
+  - job_name: environment-monitor
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - environment-monitor.default.svc:8080
+  - job_name: occupancy-monitor
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - occupancy-monitor.default.svc:8081
+  - job_name: alert-notifier
+    scrape_interval: 15s
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - alert-notifier.default.svc:8082
+  - job_name: sensors-data-collector
+    scrape_interval: 15s
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - sensors-data-collector.default.svc:8083

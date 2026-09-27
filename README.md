@@ -12,7 +12,7 @@ svc/                         Service source code
   home-dashboard/            Static Vite/React start page
   sensors-data-collector/    MQTT → Kafka collector
 deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
-deploy/observability/        Loki, Alloy, and Grafana Helm values
+deploy/observability/        Loki, Alloy, Prometheus, and Grafana Helm values
 tests/robot/                 Robot Framework night-regression suite
 scripts/                     Desktop Minikube setup using GHCR images
 Makefile                     Repository-wide build and deployment commands
@@ -142,7 +142,7 @@ OWNER=kacperkoch00 IMAGE_TAG=latest PULL_POLICY=Always \
 - `DRIVER` — Minikube driver; unset auto-detects podman then docker
 - `GHCR_TOKEN` — if set, helm registry login + `ghcr-pull-secret`; if unset, assume public images
 - `SKIP_HOSTS=1` — skip `/etc/hosts` update
-- `WITH_OBSERVABILITY=1` — also run `make k8s-observability`
+- `WITH_OBSERVABILITY=1` — also run `make k8s-observability` (Loki, Alloy, Prometheus, Grafana), wait for Grafana/Prometheus rollouts, and print Grafana access notes (`admin`/`admin`)
 
 What it does:
 
@@ -153,6 +153,33 @@ What it does:
 - Curls backend `/live` and dashboard `/` through Ingress, then prints URLs
 
 Stop with `make k8s-stop` or delete the cluster with `minikube delete`.
+
+### Observability (Loki + Prometheus + Grafana)
+
+`make k8s-observability` (alias `make k8s-grafana`) installs into namespace `observability`:
+
+- Loki + Alloy (log shipping)
+- Prometheus (scrapes backend metrics; no ServiceMonitor CRDs)
+- Grafana with pre-provisioned Loki and Prometheus datasources
+
+Admin login for local/CI is `admin` / `admin` (see `deploy/observability/grafana-values.yaml`).
+
+Prometheus scrape targets assume services in the `default` namespace:
+
+| Job | Target |
+| :-- | :----- |
+| `environment-monitor` | `environment-monitor.default.svc:8080/metrics` |
+| `occupancy-monitor` | `occupancy-monitor.default.svc:8081/metrics` |
+| `alert-notifier` | `alert-notifier.default.svc:8082/actuator/prometheus` |
+| `sensors-data-collector` | `sensors-data-collector.default.svc:8083/actuator/prometheus` |
+
+Access Grafana:
+
+```bash
+make k8s-grafana
+kubectl -n observability port-forward svc/grafana 3000:80
+# open http://localhost:3000  (admin / admin)
+```
 
 ### Access services through Ingress
 
@@ -208,11 +235,14 @@ make k8s-kafka
 make k8s-load SERVICE=environment-monitor
 make k8s-deploy SERVICE=environment-monitor
 make k8s-observability
+make k8s-grafana
 ```
 
 `make build SERVICE=<service>` builds one service, including its tests, OpenAPI generation where applicable, Helm lint, Helm packaging, and container image. `make build-all` runs the complete repository build and packages every chart. `make build-changes` builds and packages only services affected by the current Git changes; use `DIFF_BASE=<git-ref>` to choose the comparison base.
 
 `make k8s-deploy` depends on `k8s-start`, `k8s-mqtt`, and `k8s-kafka`.
+
+`make k8s-observability` / `make k8s-grafana` installs Loki, Alloy, Prometheus, and Grafana (Prometheus + Loki datasources). `WITH_OBSERVABILITY=1` on the desktop setup script gets the same stack.
 
 `make helm-template` and `make helm-package` operate on the selected service.
 Set `SERVICE` to choose the chart, for example:
@@ -294,6 +324,11 @@ Kubernetes diagnostics as the `night-regression-results-<run-number>` artifact.
 The scheduled logging-integration workflow installs a Kind logging stack
 (MQTT/Kafka plus observability components) and verifies log shipping; see
 `.github/workflows/logging-integration.yaml`.
+
+The scheduled grafana-integration workflow installs the same observability
+stack plus Prometheus, deploys the four backend services, and asserts Grafana
+health, the Prometheus datasource, and scrape `up` for all four metrics jobs;
+see `.github/workflows/grafana-integration.yaml`.
 
 The biweekly release workflow runs at midnight UTC every 14 days on Mondays and
 can also be started manually from GitHub Actions. It creates a dated GitHub

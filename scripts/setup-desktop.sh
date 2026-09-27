@@ -202,6 +202,23 @@ check_health() {
   fi
 }
 
+install_observability() {
+  log "installing observability stack (Loki, Alloy, Prometheus, Grafana)"
+  make k8s-observability
+
+  log "waiting for Grafana and Prometheus rollouts"
+  kubectl -n observability rollout status deployment/grafana --timeout=180s
+  kubectl -n observability rollout status deployment/prometheus-server --timeout=180s
+
+  log "checking Grafana /api/health"
+  kubectl run grafana-health-check \
+    --rm -i --quiet --restart=Never \
+    --image=curlimages/curl:8.10.1 \
+    -n observability \
+    -- curl --fail --silent --show-error \
+    "http://grafana.observability.svc.cluster.local/api/health"
+}
+
 print_summary() {
   local ip
   ip="$(minikube ip)"
@@ -224,6 +241,18 @@ Health via Ingress Host header:
 Stop cluster:  make k8s-stop
 Delete cluster: minikube delete
 EOF
+
+  if [[ "${WITH_OBSERVABILITY}" == "1" ]]; then
+    cat <<EOF
+
+Grafana (namespace=observability):
+  login: admin / admin
+  Loki and Prometheus datasources are pre-provisioned.
+  Port-forward:
+    kubectl -n observability port-forward svc/grafana 3000:80
+  Then open http://localhost:3000
+EOF
+  fi
 }
 
 main() {
@@ -233,8 +262,7 @@ main() {
   install_kafka
 
   if [[ "${WITH_OBSERVABILITY}" == "1" ]]; then
-    log "installing observability stack"
-    make k8s-observability
+    install_observability
   fi
 
   configure_ghcr_pull
