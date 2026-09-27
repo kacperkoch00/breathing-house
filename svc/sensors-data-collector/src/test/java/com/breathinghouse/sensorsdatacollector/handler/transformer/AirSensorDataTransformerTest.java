@@ -1,7 +1,9 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +53,8 @@ class AirSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "humidity": 45.2,
+                    "co2": 650,
                     "timestamp": "2024-01-15T10:30:00Z"
                 }
                 """;
@@ -65,6 +69,8 @@ class AirSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "humidity": 45.2,
+                    "co2": 650,
                     "timestamp": 1704312600000
                 }
                 """;
@@ -78,7 +84,9 @@ class AirSensorDataTransformerTest {
     void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
-                    "temperature": 22.5
+                    "temperature": 22.5,
+                    "humidity": 45.2,
+                    "co2": 650
                 }
                 """;
 
@@ -99,6 +107,8 @@ class AirSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "humidity": 45.2,
+                    "co2": 650,
                     "deviceId": "air-sensor-1"
                 }
                 """;
@@ -109,27 +119,73 @@ class AirSensorDataTransformerTest {
     }
 
     @Test
-    void shouldThrowExceptionForInvalidPayload() {
+    void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
                     "temperature": 22.5,
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
-        assertEquals(
-                "Invalid air sensor payload: " + payload,
-                exception.getMessage()
+        assertEquals("Invalid air sensor payload", exception.getMessage());
+        assertInstanceOf(JsonProcessingException.class, exception.getCause());
+    }
+
+    @Test
+    void shouldThrowExceptionWhenRequiredFieldMissing() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "humidity": 45.2
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
         );
 
-        assertInstanceOf(
-                com.fasterxml.jackson.core.JsonProcessingException.class,
-                exception.getCause()
+        assertEquals("Missing required field: co2", exception.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionWhenTemperatureHasWrongType() {
+        String payload = """
+                {
+                    "temperature": "warm",
+                    "humidity": 45.2,
+                    "co2": 650
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
         );
+
+        assertEquals("Field 'temperature' must be a number", exception.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionWhenHumidityOutOfRange() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "humidity": 120,
+                    "co2": 650
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
+
+        assertTrue(exception.getMessage().contains("humidity"));
     }
 
     @Test

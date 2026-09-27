@@ -66,7 +66,7 @@ class KafkaIntegrationIT {
     @ParameterizedTest
     @CsvSource({
             "home/kitchen/room,     sensor-data, '{\"temperature\":22.5,\"light\":250}', ROOM",
-            "home/kitchen/air,      sensor-data, '{\"temperature\":22.5}', AIR",
+            "home/kitchen/air,      sensor-data, '{\"temperature\":22.5,\"humidity\":45,\"co2\":650}', AIR",
             "home/kitchen/opening,  event-data,  '{\"state\":\"OPEN\"}', OPENING",
             "home/kitchen/presence, event-data,  '{\"presence\":\"DETECTED\"}', PRESENCE",
             "home/gateway/status,   status-data,  '{\"status\":\"ONLINE\"}', STATUS"

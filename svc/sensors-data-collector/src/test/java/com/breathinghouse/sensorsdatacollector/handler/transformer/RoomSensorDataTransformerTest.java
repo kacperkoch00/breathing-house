@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -53,6 +54,7 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineDarkLightLevel() {
         String payload = """
                 {
+                    "temperature": 22.5,
                     "light": 9.9
                 }
                 """;
@@ -66,6 +68,7 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineDimLightLevel() {
         String payload = """
                 {
+                    "temperature": 22.5,
                     "light": 10
                 }
                 """;
@@ -79,6 +82,7 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineNormalLightLevel() {
         String payload = """
                 {
+                    "temperature": 22.5,
                     "light": 100
                 }
                 """;
@@ -92,6 +96,7 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineBrightLightLevel() {
         String payload = """
                 {
+                    "temperature": 22.5,
                     "light": 500
                 }
                 """;
@@ -102,7 +107,7 @@ class RoomSensorDataTransformerTest {
     }
 
     @Test
-    void shouldNotAddLightLevelWhenLightValueIsMissing() {
+    void shouldThrowExceptionWhenLightMissing() {
         String payload = """
                 {
                     "temperature": 22.5,
@@ -110,29 +115,67 @@ class RoomSensorDataTransformerTest {
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
 
-        assertEquals(22.5, result.values().get("temperature"));
-        assertEquals(45.2, result.values().get("humidity"));
-        assertFalse(result.values().containsKey("lightLevel"));
+        assertEquals("Missing required field: light", exception.getMessage());
     }
 
     @Test
-    void shouldNotAddLightLevelWhenLightValueIsNotNumeric() {
+    void shouldThrowExceptionWhenLightHasWrongType() {
         String payload = """
                 {
+                    "temperature": 22.5,
                     "light": "unknown"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
 
-        assertEquals("unknown", result.values().get("light"));
-        assertFalse(result.values().containsKey("lightLevel"));
+        assertEquals("Field 'light' must be a number", exception.getMessage());
     }
 
     @Test
-    void shouldThrowExceptionForInvalidPayload() {
+    void shouldThrowExceptionWhenTemperatureOutOfRange() {
+        String payload = """
+                {
+                    "temperature": 100,
+                    "light": 320
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
+
+        assertTrue(exception.getMessage().contains("temperature"));
+    }
+
+    @Test
+    void shouldThrowExceptionWhenLightNegative() {
+        String payload = """
+                {
+                    "temperature": 22.5,
+                    "light": -1
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
+
+        assertTrue(exception.getMessage().contains("light"));
+    }
+
+    @Test
+    void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
                     "temperature": 22.5,
@@ -140,12 +183,12 @@ class RoomSensorDataTransformerTest {
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
-        assertEquals("Invalid room sensor payload: " + payload, exception.getMessage());
+        assertEquals("Invalid room sensor payload", exception.getMessage());
         assertInstanceOf(JsonProcessingException.class, exception.getCause());
     }
 
@@ -154,6 +197,7 @@ class RoomSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "light": 320,
                     "timestamp": "2024-01-15T10:30:00Z"
                 }
                 """;
@@ -168,6 +212,7 @@ class RoomSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "light": 320,
                     "timestamp": 1704312600000
                 }
                 """;
@@ -203,6 +248,7 @@ class RoomSensorDataTransformerTest {
         String payload = """
                 {
                     "temperature": 22.5,
+                    "light": 320,
                     "deviceId": "room-sensor-1"
                 }
                 """;

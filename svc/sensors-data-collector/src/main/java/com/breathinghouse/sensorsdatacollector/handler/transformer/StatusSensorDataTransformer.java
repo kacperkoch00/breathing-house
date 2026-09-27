@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -32,9 +33,10 @@ public class StatusSensorDataTransformer implements SensorDataTransformer {
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
+            PayloadRules.requireNonBlank(values, "status");
             return SensorDataFactory.create(roomId, SensorType.STATUS, values);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid status sensor payload: " + payload, e);
+            throw new InvalidSensorPayloadException("Invalid status sensor payload", e);
         }
     }
 }

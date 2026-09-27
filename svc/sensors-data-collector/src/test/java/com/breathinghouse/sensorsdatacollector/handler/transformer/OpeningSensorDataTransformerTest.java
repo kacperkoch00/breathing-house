@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -96,8 +97,8 @@ class OpeningSensorDataTransformerTest {
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
@@ -105,20 +106,31 @@ class OpeningSensorDataTransformerTest {
     }
 
     @Test
-    void shouldThrowExceptionForInvalidPayload() {
+    void shouldThrowExceptionWhenStateMissing() {
+        String payload = "{}";
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
+
+        assertEquals("Missing required field: state", exception.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
                     "state": "OPEN",
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
-        assertEquals("Invalid opening sensor payload: " + payload, exception.getMessage());
-
+        assertEquals("Invalid opening sensor payload", exception.getMessage());
         assertInstanceOf(JsonProcessingException.class, exception.getCause());
     }
 

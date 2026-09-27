@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -96,8 +97,8 @@ class PresenceSensorDataTransformerTest {
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
@@ -105,20 +106,31 @@ class PresenceSensorDataTransformerTest {
     }
 
     @Test
-    void shouldThrowExceptionForInvalidPayload() {
+    void shouldThrowExceptionWhenPresenceMissing() {
+        String payload = "{}";
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, "kitchen")
+        );
+
+        assertEquals("Missing required field: presence", exception.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
                     "presence": "DETECTED",
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
                 () -> transformer.transform(payload, "kitchen")
         );
 
-        assertEquals("Invalid presence sensor payload: " + payload, exception.getMessage());
-
+        assertEquals("Invalid presence sensor payload", exception.getMessage());
         assertInstanceOf(JsonProcessingException.class, exception.getCause());
     }
 
