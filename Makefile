@@ -236,6 +236,12 @@ k8s-kafka: k8s-start
 		--create \
 		--if-not-exists \
 		--topic status-data
+	kubectl exec deployment/kafka -- \
+		/opt/kafka/bin/kafka-topics.sh \
+		--bootstrap-server localhost:9092 \
+		--create \
+		--if-not-exists \
+		--topic sensor-data-dlq
 
 k8s-observability: k8s-start
 	@kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -

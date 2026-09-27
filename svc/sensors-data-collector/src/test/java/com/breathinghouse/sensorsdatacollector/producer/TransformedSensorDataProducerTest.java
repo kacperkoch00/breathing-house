@@ -39,7 +39,8 @@ class TransformedSensorDataProducerTest {
         KafkaTopicProperties topicProperties = new KafkaTopicProperties(
                 "sensor-data",
                 "event-data",
-                "status-data"
+                "status-data",
+                "sensor-data-dlq"
         );
 
         producer = new TransformedSensorDataProducer(kafkaTemplate, topicProperties);

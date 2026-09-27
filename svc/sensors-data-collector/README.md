@@ -69,6 +69,7 @@ falls back to its default local development value.
 | `KAFKA_SENSOR_TOPIC`      | Kafka topic for room and air sensor data          | `sensor-data`                                                               | `kafka.producer.topics.sensor` |
 | `KAFKA_EVENT_TOPIC`       | Kafka topic for opening and presence events       | `event-data`                                                                | `kafka.producer.topics.event`  |
 | `KAFKA_STATUS_TOPIC`      | Kafka topic for gateway status data               | `status-data`                                                               | `kafka.producer.topics.status` |
+| `KAFKA_DLQ_TOPIC`         | Kafka topic for invalid (poison) sensor payloads  | `sensor-data-dlq`                                                           | `kafka.producer.topics.dlq`    |
 
 ### Setting Environment Variables in Kubernetes
 
@@ -90,6 +91,7 @@ env:
   KAFKA_SENSOR_TOPIC: "sensor-data"
   KAFKA_EVENT_TOPIC: "event-data"
   KAFKA_STATUS_TOPIC: "status-data"
+  KAFKA_DLQ_TOPIC: "sensor-data-dlq"
 ```
 
 ## Kubernetes
@@ -148,6 +150,7 @@ The expected topics are:
 ```text
 event-data
 sensor-data
+sensor-data-dlq
 status-data
 ```
 
@@ -155,7 +158,8 @@ status-data
 
 Each sensor type requires specific fields before a message is published to Kafka.
 Invalid payloads raise `InvalidSensorPayloadException`, are logged by the handler,
-and are **not** published (no DLQ yet).
+are **not** published to `sensor-data` / `event-data` / `status-data`, and are
+written to the DLQ topic (`sensor-data-dlq` by default) as a `PoisonMessage`.
 
 | Sensor Type | Required Fields | Rules |
 | :---------- | :-------------- | :---- |

@@ -6,12 +6,15 @@ import com.breathinghouse.sensorsdatacollector.handler.transformer.PresenceSenso
 import com.breathinghouse.sensorsdatacollector.handler.transformer.RoomSensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.StatusSensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.producer.PoisonMessage;
+import com.breathinghouse.sensorsdatacollector.producer.PoisonMessageProducer;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.time.Instant;
@@ -19,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,11 +32,13 @@ class SensorDataHandlerTest {
 
     private SensorDataHandler handler;
     private TransformedSensorDataProducer producer;
+    private PoisonMessageProducer poisonMessageProducer;
 
     @BeforeEach
     void setUp() {
         ObjectMapper mapper = new ObjectMapper();
         producer = Mockito.mock(TransformedSensorDataProducer.class);
+        poisonMessageProducer = Mockito.mock(PoisonMessageProducer.class);
 
         List<SensorDataTransformer> transformers = List.of(
                 new RoomSensorDataTransformer(mapper),
@@ -41,7 +48,7 @@ class SensorDataHandlerTest {
                 new StatusSensorDataTransformer(mapper)
         );
 
-        handler = new SensorDataHandler(transformers, producer);
+        handler = new SensorDataHandler(transformers, producer, poisonMessageProducer);
     }
 
     @ParameterizedTest
@@ -65,15 +72,26 @@ class SensorDataHandlerTest {
         );
 
         verify(producer).send(any(SensorData.class));
+        verify(poisonMessageProducer, never()).send(any());
     }
 
     @Test
-    void shouldNotPublishInvalidPayload() {
+    void shouldPublishInvalidPayloadToDlq() {
         assertDoesNotThrow(() ->
                 handler.handle("{}", "home/kitchen/air")
         );
 
         verify(producer, never()).send(any());
+
+        ArgumentCaptor<PoisonMessage> captor = ArgumentCaptor.forClass(PoisonMessage.class);
+        verify(poisonMessageProducer).send(captor.capture());
+
+        PoisonMessage poisonMessage = captor.getValue();
+        assertEquals("kitchen", poisonMessage.roomId());
+        assertEquals("AIR", poisonMessage.sensorType());
+        assertEquals("{}", poisonMessage.payload());
+        assertEquals("home/kitchen/air", poisonMessage.mqttTopic());
+        assertFalse(poisonMessage.reason() == null || poisonMessage.reason().isBlank());
     }
 
     @ParameterizedTest
@@ -91,6 +109,7 @@ class SensorDataHandlerTest {
         );
 
         verify(producer, never()).send(any());
+        verify(poisonMessageProducer, never()).send(any());
     }
 
     @Test
@@ -100,6 +119,7 @@ class SensorDataHandlerTest {
         );
 
         verify(producer, never()).send(any());
+        verify(poisonMessageProducer, never()).send(any());
     }
 
     @Test
@@ -126,12 +146,18 @@ class SensorDataHandlerTest {
         };
 
         TransformedSensorDataProducer producerWithoutAir = Mockito.mock(TransformedSensorDataProducer.class);
-        SensorDataHandler handlerWithoutAir = new SensorDataHandler(List.of(transformer), producerWithoutAir);
+        PoisonMessageProducer poisonWithoutAir = Mockito.mock(PoisonMessageProducer.class);
+        SensorDataHandler handlerWithoutAir = new SensorDataHandler(
+                List.of(transformer),
+                producerWithoutAir,
+                poisonWithoutAir
+        );
 
         assertDoesNotThrow(() ->
                 handlerWithoutAir.handle("{}", "home/kitchen/air")
         );
 
         verify(producerWithoutAir, never()).send(any());
+        verify(poisonWithoutAir, never()).send(any());
     }
 }
