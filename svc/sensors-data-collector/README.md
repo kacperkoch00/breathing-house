@@ -32,6 +32,10 @@ following Kafka topics:
 | `PRESENCE`  | `event-data`  |
 | `STATUS`    | `status-data` |
 
+On MQTT reconnect, the collector resubscribes when the broker reports no
+existing session. Publish handling is registered once so reconnects do not
+duplicate message delivery. Subscription QoS defaults to `1` (`MQTT_QOS`).
+
 ## Building
 
 From the repository root, build the service image and Helm chart with:
@@ -58,6 +62,7 @@ falls back to its default local development value.
 | `MQTT_CONSUMER_TOPICS`    | Comma-separated list of target sensor topics      | `home/+/room,home/+/air,home/+/opening,home/+/presence,home/gateway/status` | `mqtt.consumer.topics`         |
 | `MQTT_INITIAL_DELAY_MS`   | Starting delay for reconnect attempts             | `1000`                                                                      | `mqtt.initial.delay.ms`        |
 | `MQTT_MAX_DELAY_MS`       | Maximum delay between reconnect attempts          | `60000`                                                                     | `mqtt.max.delay.ms`            |
+| `MQTT_QOS`                | MQTT subscription QoS (0, 1, or 2)                | `1`                                                                         | `mqtt.qos`                     |
 | `KAFKA_BOOTSTRAP_SERVERS` | Comma-separated list of Kafka bootstrap servers   | `localhost:9092`                                                            | `kafka.bootstrap-servers`      |
 | `KAFKA_SENSOR_TOPIC`      | Kafka topic for room and air sensor data          | `sensor-data`                                                               | `kafka.producer.topics.sensor` |
 | `KAFKA_EVENT_TOPIC`       | Kafka topic for opening and presence events       | `event-data`                                                                | `kafka.producer.topics.event`  |

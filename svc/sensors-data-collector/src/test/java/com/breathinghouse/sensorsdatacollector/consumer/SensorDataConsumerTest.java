@@ -1,8 +1,12 @@
 package com.breathinghouse.sensorsdatacollector.consumer;
 
+import com.hivemq.client.mqtt.MqttGlobalPublishFilter;
+import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.datatypes.MqttTopic;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
+import com.hivemq.client.mqtt.mqtt5.lifecycle.Mqtt5ClientConnectedContext;
 import com.hivemq.client.mqtt.mqtt5.message.connect.connack.Mqtt5ConnAck;
+import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.Mqtt5Subscribe;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import org.junit.jupiter.api.Test;
@@ -16,18 +20,21 @@ import org.springframework.messaging.MessageChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SensorDataConsumerTest {
+
     @Mock private SensorDataConsumerConfig config;
     @Mock private Mqtt5AsyncClient hiveMqClient;
     @Mock private MessageChannel messageChannel;
@@ -36,31 +43,14 @@ class SensorDataConsumerTest {
     private SensorDataConsumer sensorDataConsumer;
 
     @Test
-    void shouldConnectAndSubscribeOnStartup() {
-        List<String> mockTopics = List.of("home/+/room", "home/+/air", "home/+/occupation");
-        when(config.getConsumerTopics()).thenReturn(mockTopics);
-
-        CompletableFuture<Mqtt5ConnAck> connAckFuture = CompletableFuture.completedFuture(mock(Mqtt5ConnAck.class));
-        CompletableFuture<Mqtt5SubAck> subAckFuture = CompletableFuture.completedFuture(mock(Mqtt5SubAck.class));
-
-        when(hiveMqClient.connect()).thenReturn(connAckFuture);
-        when(hiveMqClient.subscribe(any(Mqtt5Subscribe.class), any())).thenReturn(subAckFuture);
+    void shouldRegisterPublishesAndConnectOnStartup() {
+        when(hiveMqClient.connect()).thenReturn(CompletableFuture.completedFuture(mock(Mqtt5ConnAck.class)));
 
         sensorDataConsumer.startMqttSubscription();
 
-        verify(hiveMqClient, times(1)).connect();
-
-        ArgumentCaptor<Mqtt5Subscribe> subscribeCaptor = ArgumentCaptor.forClass(Mqtt5Subscribe.class);
-        verify(hiveMqClient, times(1)).subscribe(subscribeCaptor.capture(), any());
-
-        Mqtt5Subscribe actualSubscribePacket = subscribeCaptor.getValue();
-        assertEquals(mockTopics.size(), actualSubscribePacket.getSubscriptions().size());
-        IntStream.range(0, mockTopics.size()).forEach(i -> {
-            assertEquals(
-                    mockTopics.get(i),
-                    actualSubscribePacket.getSubscriptions().get(i).getTopicFilter().toString()
-            );
-        });
+        verify(hiveMqClient).publishes(eq(MqttGlobalPublishFilter.ALL), any());
+        verify(hiveMqClient).connect();
+        verify(hiveMqClient, never()).subscribe(any(Mqtt5Subscribe.class));
     }
 
     @Test
@@ -71,21 +61,86 @@ class SensorDataConsumerTest {
 
         sensorDataConsumer.startMqttSubscription();
 
-        verify(hiveMqClient, times(1)).connect();
-        verify(hiveMqClient, never()).subscribe(any(Mqtt5Subscribe.class), any());
+        verify(hiveMqClient).connect();
+        verify(hiveMqClient, never()).subscribe(any(Mqtt5Subscribe.class));
+    }
+
+    @Test
+    void shouldSubscribeWithConfiguredQosWhenSessionAbsent() {
+        List<String> mockTopics = List.of("home/+/room", "home/+/air", "home/+/presence");
+        when(config.getConsumerTopics()).thenReturn(mockTopics);
+        when(config.getQos()).thenReturn(1);
+        when(hiveMqClient.subscribe(any(Mqtt5Subscribe.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(Mqtt5SubAck.class)));
+
+        Mqtt5ClientConnectedContext context = mock(Mqtt5ClientConnectedContext.class);
+        Mqtt5ConnAck connAck = mock(Mqtt5ConnAck.class);
+        when(context.getConnAck()).thenReturn(connAck);
+        when(connAck.isSessionPresent()).thenReturn(false);
+
+        sensorDataConsumer.onConnected(context);
+
+        ArgumentCaptor<Mqtt5Subscribe> subscribeCaptor = ArgumentCaptor.forClass(Mqtt5Subscribe.class);
+        verify(hiveMqClient).subscribe(subscribeCaptor.capture());
+
+        Mqtt5Subscribe actualSubscribePacket = subscribeCaptor.getValue();
+        assertEquals(mockTopics.size(), actualSubscribePacket.getSubscriptions().size());
+        IntStream.range(0, mockTopics.size()).forEach(i -> {
+            assertEquals(
+                    mockTopics.get(i),
+                    actualSubscribePacket.getSubscriptions().get(i).getTopicFilter().toString()
+            );
+            assertEquals(
+                    MqttQos.AT_LEAST_ONCE,
+                    actualSubscribePacket.getSubscriptions().get(i).getQos()
+            );
+        });
+    }
+
+    @Test
+    void shouldSkipSubscribeWhenSessionPresent() {
+        Mqtt5ClientConnectedContext context = mock(Mqtt5ClientConnectedContext.class);
+        Mqtt5ConnAck connAck = mock(Mqtt5ConnAck.class);
+        when(context.getConnAck()).thenReturn(connAck);
+        when(connAck.isSessionPresent()).thenReturn(true);
+
+        sensorDataConsumer.onConnected(context);
+
+        verify(hiveMqClient, never()).subscribe(any(Mqtt5Subscribe.class));
+    }
+
+    @Test
+    void shouldRegisterPublishesOnlyOnceAcrossReconnects() {
+        when(hiveMqClient.connect()).thenReturn(CompletableFuture.completedFuture(mock(Mqtt5ConnAck.class)));
+        when(config.getConsumerTopics()).thenReturn(List.of("home/+/room"));
+        when(config.getQos()).thenReturn(1);
+        when(hiveMqClient.subscribe(any(Mqtt5Subscribe.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(Mqtt5SubAck.class)));
+
+        sensorDataConsumer.startMqttSubscription();
+        sensorDataConsumer.startMqttSubscription();
+
+        Mqtt5ClientConnectedContext context = mock(Mqtt5ClientConnectedContext.class);
+        Mqtt5ConnAck connAck = mock(Mqtt5ConnAck.class);
+        when(context.getConnAck()).thenReturn(connAck);
+        when(connAck.isSessionPresent()).thenReturn(false);
+
+        sensorDataConsumer.onConnected(context);
+        sensorDataConsumer.onConnected(context);
+
+        verify(hiveMqClient, times(1)).publishes(eq(MqttGlobalPublishFilter.ALL), any());
+        verify(hiveMqClient, times(2)).subscribe(any(Mqtt5Subscribe.class));
     }
 
     @Test
     void shouldForwardMqttPayloadToSpringChannel() {
-        when(config.getConsumerTopics()).thenReturn(List.of("home/+/room"));
-        when(hiveMqClient.connect()).thenReturn(CompletableFuture.completedFuture(null));
-        when(hiveMqClient.subscribe(any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+        when(hiveMqClient.connect()).thenReturn(CompletableFuture.completedFuture(mock(Mqtt5ConnAck.class)));
         sensorDataConsumer.startMqttSubscription();
 
-        ArgumentCaptor<java.util.function.Consumer<com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish>> callbackCaptor = ArgumentCaptor.captor();
-        verify(hiveMqClient).subscribe(any(), callbackCaptor.capture());
+        ArgumentCaptor<Consumer<Mqtt5Publish>> callbackCaptor = ArgumentCaptor.captor();
+        verify(hiveMqClient).publishes(eq(MqttGlobalPublishFilter.ALL), callbackCaptor.capture());
 
-        var mockPublish = mock(com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish.class);
+        Mqtt5Publish mockPublish = mock(Mqtt5Publish.class);
         when(mockPublish.getPayloadAsBytes()).thenReturn("{\"test\":1}".getBytes(StandardCharsets.UTF_8));
         when(mockPublish.getTopic()).thenReturn(MqttTopic.of("home/kitchen/air"));
 
@@ -95,5 +150,4 @@ class SensorDataConsumerTest {
         verify(messageChannel).send(msgCaptor.capture());
         assertEquals("{\"test\":1}", msgCaptor.getValue().getPayload());
     }
-
 }

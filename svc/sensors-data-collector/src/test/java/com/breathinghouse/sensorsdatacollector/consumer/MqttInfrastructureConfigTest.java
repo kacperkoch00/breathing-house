@@ -1,22 +1,21 @@
 package com.breathinghouse.sensorsdatacollector.consumer;
 
 import com.hivemq.client.mqtt.MqttClientConfig;
-import com.hivemq.client.mqtt.lifecycle.MqttClientConnectedContext;
 import com.hivemq.client.mqtt.lifecycle.MqttClientDisconnectedContext;
-
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
+import com.hivemq.client.mqtt.mqtt5.lifecycle.Mqtt5ClientConnectedContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,8 +24,10 @@ class MqttInfrastructureConfigTest {
     @Mock
     private SensorDataConsumerConfig config;
 
-    @InjectMocks
-    private MqttInfrastructureConfig mqttInfrastructureConfig;
+    @Mock
+    private ObjectProvider<SensorDataConsumer> sensorDataConsumer;
+
+    private final MqttInfrastructureConfig mqttInfrastructureConfig = new MqttInfrastructureConfig();
 
     @Test
     void shouldConfigureHiveMqClientWithProperties() {
@@ -42,7 +43,7 @@ class MqttInfrastructureConfigTest {
         when(config.getInitialDelayMs()).thenReturn(initialDelayMs);
         when(config.getMaxDelayMs()).thenReturn(maxDelayMs);
 
-        Mqtt5AsyncClient client = mqttInfrastructureConfig.hiveMqClient(config);
+        Mqtt5AsyncClient client = mqttInfrastructureConfig.hiveMqClient(config, sensorDataConsumer);
 
         assertNotNull(client, "Generated client bean must not be null");
 
@@ -66,9 +67,22 @@ class MqttInfrastructureConfigTest {
     }
 
     @Test
-    void shouldHandleConnectedEvent() {
-        var connectContext = mock(MqttClientConnectedContext.class);
-        mqttInfrastructureConfig.onConnected(connectContext);
+    void shouldDelegateConnectedEventToConsumer() {
+        SensorDataConsumer consumer = mock(SensorDataConsumer.class);
+        when(sensorDataConsumer.getIfAvailable()).thenReturn(consumer);
+
+        Mqtt5ClientConnectedContext context = mock(Mqtt5ClientConnectedContext.class);
+
+        mqttInfrastructureConfig.onConnected(context, sensorDataConsumer);
+
+        verify(consumer).onConnected(context);
+    }
+
+    @Test
+    void shouldIgnoreConnectedEventWhenConsumerUnavailable() {
+        when(sensorDataConsumer.getIfAvailable()).thenReturn(null);
+
+        mqttInfrastructureConfig.onConnected(mock(Mqtt5ClientConnectedContext.class), sensorDataConsumer);
     }
 
     @Test

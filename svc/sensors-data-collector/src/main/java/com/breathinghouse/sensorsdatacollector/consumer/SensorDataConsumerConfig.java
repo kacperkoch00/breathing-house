@@ -19,4 +19,5 @@ public class SensorDataConsumerConfig {
     private List<String> consumerTopics;
     private Integer initialDelayMs;
     private Integer maxDelayMs;
+    private Integer qos;
 }
