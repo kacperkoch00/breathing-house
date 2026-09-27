@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -35,8 +36,7 @@ public class PresenceSensorDataTransformer implements SensorDataTransformer {
 
         try {
             JsonNode root = objectMapper.readTree(payload);
-            String presence = root.path("presence").asText();
-
+            String presence = PayloadRules.requireNonBlank(root, "presence");
             boolean present = isPresent(presence);
 
             return SensorDataFactory.create(
@@ -46,7 +46,7 @@ public class PresenceSensorDataTransformer implements SensorDataTransformer {
                     Map.of("present", present)
             );
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid presence sensor payload: " + payload, e);
+            throw new InvalidSensorPayloadException("Invalid presence sensor payload", e);
         }
     }
 
@@ -54,7 +54,7 @@ public class PresenceSensorDataTransformer implements SensorDataTransformer {
         return switch (presence.toUpperCase()) {
             case DETECTED_STATE -> true;
             case CLEAR_STATE -> false;
-            default -> throw new IllegalArgumentException("Unknown presence state: " + presence);
+            default -> throw new InvalidSensorPayloadException("Unknown presence state: " + presence);
         };
     }
 }

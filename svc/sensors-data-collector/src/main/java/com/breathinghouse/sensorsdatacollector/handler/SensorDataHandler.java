@@ -1,7 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler;
 
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
-import com.breathinghouse.sensorsdatacollector.producer.KafkaProducerConfig;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +63,16 @@ public class SensorDataHandler {
                 payload
         );
 
-        transformedSensorDataProducer.send(transformer.transform(payload, sensorTopic.roomId()));
+        try {
+            transformedSensorDataProducer.send(transformer.transform(payload, sensorTopic.roomId()));
+        } catch (InvalidSensorPayloadException e) {
+            log.warn(
+                    "Ignoring invalid sensor payload. Room ID: {}, Sensor Type: {}, Reason: {}, Payload: {}",
+                    sensorTopic.roomId(),
+                    sensorType,
+                    e.getMessage(),
+                    payload
+            );
+        }
     }
 }

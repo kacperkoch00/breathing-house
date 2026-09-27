@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -36,7 +37,7 @@ public class OpeningSensorDataTransformer implements SensorDataTransformer {
 
         try {
             JsonNode root = objectMapper.readTree(payload);
-            String state = root.path("state").asText();
+            String state = PayloadRules.requireNonBlank(root, "state");
             return SensorDataFactory.create(
                     roomId,
                     SensorType.OPENING,
@@ -44,7 +45,7 @@ public class OpeningSensorDataTransformer implements SensorDataTransformer {
                     Map.of("open", isOpen(state))
             );
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid opening sensor payload: " + payload, e);
+            throw new InvalidSensorPayloadException("Invalid opening sensor payload", e);
         }
     }
 
@@ -52,7 +53,7 @@ public class OpeningSensorDataTransformer implements SensorDataTransformer {
         return switch (state.toUpperCase()) {
             case OPEN_STATE -> true;
             case CLOSED_STATE -> false;
-            default -> throw new IllegalArgumentException("Unknown opening state: " + state);
+            default -> throw new InvalidSensorPayloadException("Unknown opening state: " + state);
         };
     }
 }

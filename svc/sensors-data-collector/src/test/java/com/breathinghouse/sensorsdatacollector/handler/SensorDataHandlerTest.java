@@ -6,7 +6,6 @@ import com.breathinghouse.sensorsdatacollector.handler.transformer.PresenceSenso
 import com.breathinghouse.sensorsdatacollector.handler.transformer.RoomSensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.StatusSensorDataTransformer;
-import com.breathinghouse.sensorsdatacollector.producer.KafkaProducerConfig;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,15 +19,19 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class SensorDataHandlerTest {
 
     private SensorDataHandler handler;
+    private TransformedSensorDataProducer producer;
 
     @BeforeEach
     void setUp() {
         ObjectMapper mapper = new ObjectMapper();
-        TransformedSensorDataProducer producer = Mockito.mock(TransformedSensorDataProducer.class);
+        producer = Mockito.mock(TransformedSensorDataProducer.class);
 
         List<SensorDataTransformer> transformers = List.of(
                 new RoomSensorDataTransformer(mapper),
@@ -51,15 +54,26 @@ class SensorDataHandlerTest {
     })
     void shouldHandleAllSensorTypes(String sensorType) {
         Map<String, String> payloads = Map.of(
-                "room", "{}",
-                "air", "{}",
+                "room", "{\"temperature\":22.5,\"light\":250}",
+                "air", "{\"temperature\":22.5,\"humidity\":45,\"co2\":650}",
                 "opening", "{\"state\": \"open\"}",
                 "presence", "{\"presence\": \"detected\"}",
-                "status", "{}");
+                "status", "{\"status\":\"ONLINE\"}");
 
         assertDoesNotThrow(() ->
                 handler.handle(payloads.get(sensorType), "home/kitchen/" + sensorType)
         );
+
+        verify(producer).send(any(SensorData.class));
+    }
+
+    @Test
+    void shouldNotPublishInvalidPayload() {
+        assertDoesNotThrow(() ->
+                handler.handle("{}", "home/kitchen/air")
+        );
+
+        verify(producer, never()).send(any());
     }
 
     @ParameterizedTest
@@ -75,6 +89,8 @@ class SensorDataHandlerTest {
         assertDoesNotThrow(() ->
                 handler.handle("{}", topic)
         );
+
+        verify(producer, never()).send(any());
     }
 
     @Test
@@ -82,6 +98,8 @@ class SensorDataHandlerTest {
         assertDoesNotThrow(() ->
                 handler.handle("{}", "home/kitchen/unknown")
         );
+
+        verify(producer, never()).send(any());
     }
 
     @Test
@@ -107,11 +125,13 @@ class SensorDataHandlerTest {
             }
         };
 
-        TransformedSensorDataProducer producer = Mockito.mock(TransformedSensorDataProducer.class);
-        SensorDataHandler handler = new SensorDataHandler(List.of(transformer), producer);
+        TransformedSensorDataProducer producerWithoutAir = Mockito.mock(TransformedSensorDataProducer.class);
+        SensorDataHandler handlerWithoutAir = new SensorDataHandler(List.of(transformer), producerWithoutAir);
 
         assertDoesNotThrow(() ->
-                handler.handle("{}", "home/kitchen/air")
+                handlerWithoutAir.handle("{}", "home/kitchen/air")
         );
+
+        verify(producerWithoutAir, never()).send(any());
     }
 }

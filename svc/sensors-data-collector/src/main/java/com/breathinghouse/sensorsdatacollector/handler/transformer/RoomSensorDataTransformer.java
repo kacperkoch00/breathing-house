@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -9,11 +10,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.Map;
 
 @Component
 public class RoomSensorDataTransformer implements SensorDataTransformer {
     private static final Logger log = LoggerFactory.getLogger(RoomSensorDataTransformer.class);
+
+    private static final double TEMPERATURE_MIN = -40;
+    private static final double TEMPERATURE_MAX = 80;
+    private static final double LIGHT_MIN = 0;
 
     private final ObjectMapper objectMapper;
 
@@ -32,16 +38,18 @@ public class RoomSensorDataTransformer implements SensorDataTransformer {
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
-            Object lightValue = values.get("light");
+            double temperature = PayloadRules.requireNumber(values, "temperature");
+            PayloadRules.requireInRange(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, "temperature");
 
-            if (lightValue instanceof Number light) {
-                values = new java.util.HashMap<>(values);
-                values.put("lightLevel", determineLightLevel(light.doubleValue()));
-            }
+            double light = PayloadRules.requireNumber(values, "light");
+            PayloadRules.requireInRange(light, LIGHT_MIN, Double.POSITIVE_INFINITY, "light");
+
+            values = new HashMap<>(values);
+            values.put("lightLevel", determineLightLevel(light));
 
             return SensorDataFactory.create(roomId, SensorType.ROOM, values);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid room sensor payload: " + payload, e);
+            throw new InvalidSensorPayloadException("Invalid room sensor payload", e);
         }
     }
 

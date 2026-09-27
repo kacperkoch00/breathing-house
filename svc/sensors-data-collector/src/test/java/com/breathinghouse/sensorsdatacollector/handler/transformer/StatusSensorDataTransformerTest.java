@@ -1,5 +1,6 @@
 package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
+import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadException;
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -89,17 +90,48 @@ class StatusSensorDataTransformerTest {
     }
 
     @Test
-    void shouldThrowExceptionForInvalidPayload() {
+    void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
                     "status": "ONLINE",
                 }
                 """;
 
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> transformer.transform(payload, null));
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, null)
+        );
 
-        assertEquals("Invalid status sensor payload: " + payload, exception.getMessage());
+        assertEquals("Invalid status sensor payload", exception.getMessage());
         assertInstanceOf(JsonProcessingException.class, exception.getCause());
+    }
+
+    @Test
+    void shouldThrowExceptionWhenStatusMissing() {
+        String payload = "{}";
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, null)
+        );
+
+        assertEquals("Missing required field: status", exception.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionWhenStatusBlank() {
+        String payload = """
+                {
+                    "status": "   "
+                }
+                """;
+
+        InvalidSensorPayloadException exception = assertThrows(
+                InvalidSensorPayloadException.class,
+                () -> transformer.transform(payload, null)
+        );
+
+        assertEquals("Field 'status' must be a non-blank string", exception.getMessage());
     }
 
     @Test

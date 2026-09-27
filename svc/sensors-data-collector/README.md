@@ -151,6 +151,23 @@ sensor-data
 status-data
 ```
 
+## Payload Validation
+
+Each sensor type requires specific fields before a message is published to Kafka.
+Invalid payloads raise `InvalidSensorPayloadException`, are logged by the handler,
+and are **not** published (no DLQ yet).
+
+| Sensor Type | Required Fields | Rules |
+| :---------- | :-------------- | :---- |
+| `ROOM`      | `temperature`, `light` (numbers) | temperature ∈ [-40, 80]; light ≥ 0 (lux). Then `lightLevel` is derived |
+| `AIR`       | `temperature`, `humidity`, `co2` (numbers) | temperature ∈ [-40, 80]; humidity ∈ [0, 100]; co2 ∈ [0, 10000] |
+| `OPENING`   | `state` (string) | `OPEN` / `CLOSED` (case-insensitive) → `open` boolean |
+| `PRESENCE`  | `presence` (string) | `DETECTED` / `CLEAR` (case-insensitive) → `present` boolean |
+| `STATUS`    | `status` (string) | non-blank |
+
+Optional envelope fields `timestamp` and `deviceId` remain optional. Empty `{}`
+payloads for `ROOM` / `AIR` / `STATUS` are rejected.
+
 ## Kafka Message Envelope
 
 Transformed messages published to Kafka use this JSON envelope (`SensorData`):
