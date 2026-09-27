@@ -24,6 +24,7 @@ class PrometheusEndpointTest {
     void getActuatorPrometheusReturnsJvmMetrics() throws Exception {
         mockMvc.perform(get("/actuator/prometheus"))
                 .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/plain"))
                 .andExpect(content().string(containsString("jvm_memory_used_bytes")));
     }
 }
