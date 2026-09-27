@@ -40,7 +40,13 @@ duplicate message delivery. Subscription QoS defaults to `1` (`MQTT_QOS`).
 
 ## Building
 
-From the repository root, build the service image and Helm chart with:
+From the repository root, build the service image with **podman**:
+
+```bash
+make image SERVICE=sensors-data-collector IMAGE=localhost/sensors-data-collector:dev
+```
+
+To publish to a registry, retag and push:
 
 ```bash
 make image SERVICE=sensors-data-collector IMAGE=ghcr.io/<owner>/sensors-data-collector:0.1.0
@@ -56,20 +62,21 @@ The application can be configured at runtime using the following environment
 variables. If an environment variable is omitted, the service automatically
 falls back to its default local development value.
 
-| Environment Variable      | Description                                       | Local Default Value                                                         | Java Property Mapping          |
-| :------------------------ | :------------------------------------------------ | :-------------------------------------------------------------------------- | :----------------------------- |
-| `MQTT_BROKER_IP`          | IPv4 address or hostname of the MQTT broker       | `localhost`                                                                 | `mqtt.broker.ip`               |
-| `MQTT_BROKER_PORT_NUMBER` | Network port for the MQTT 5 broker                | `1883`                                                                      | `mqtt.broker.port`             |
-| `MQTT_CLIENT_ID`          | Base identifier string for this microservice node | `sensors-data-collector`                                                    | `mqtt.client.id`               |
-| `MQTT_CONSUMER_TOPICS`    | Comma-separated list of target sensor topics      | `home/+/room,home/+/air,home/+/opening,home/+/presence,home/gateway/status` | `mqtt.consumer.topics`         |
-| `MQTT_INITIAL_DELAY_MS`   | Starting delay for reconnect attempts             | `1000`                                                                      | `mqtt.initial.delay.ms`        |
-| `MQTT_MAX_DELAY_MS`       | Maximum delay between reconnect attempts          | `60000`                                                                     | `mqtt.max.delay.ms`            |
-| `MQTT_QOS`                | MQTT subscription QoS (0, 1, or 2)                | `1`                                                                         | `mqtt.qos`                     |
-| `KAFKA_BOOTSTRAP_SERVERS` | Comma-separated list of Kafka bootstrap servers   | `localhost:9092`                                                            | `kafka.bootstrap-servers`      |
-| `KAFKA_SENSOR_TOPIC`      | Kafka topic for room and air sensor data          | `sensor-data`                                                               | `kafka.producer.topics.sensor` |
-| `KAFKA_EVENT_TOPIC`       | Kafka topic for opening and presence events       | `event-data`                                                                | `kafka.producer.topics.event`  |
-| `KAFKA_STATUS_TOPIC`      | Kafka topic for gateway status data               | `status-data`                                                               | `kafka.producer.topics.status` |
-| `KAFKA_DLQ_TOPIC`         | Kafka topic for invalid (poison) sensor payloads  | `sensor-data-dlq`                                                           | `kafka.producer.topics.dlq`    |
+| Environment Variable      | Description                                       | Local Default Value                                                         | Java Property Mapping            |
+| :------------------------ | :------------------------------------------------ | :-------------------------------------------------------------------------- | :------------------------------- |
+| `HTTP_PORT`               | HTTP listen port                                  | `8083`                                                                      | `server.port`                    |
+| `MQTT_BROKER_IP`          | IPv4 address or hostname of the MQTT broker       | `localhost`                                                                 | `mqtt.broker-ip`                 |
+| `MQTT_BROKER_PORT_NUMBER` | Network port for the MQTT 5 broker                | `1883`                                                                      | `mqtt.broker-port`               |
+| `MQTT_CLIENT_ID`          | Base identifier string for this microservice node | `sensors-data-collector`                                                    | `mqtt.client-id`                 |
+| `MQTT_CONSUMER_TOPICS`    | Comma-separated list of target sensor topics      | `home/+/room,home/+/air,home/+/opening,home/+/presence,home/gateway/status` | `mqtt.consumer-topics`           |
+| `MQTT_INITIAL_DELAY_MS`   | Starting delay for reconnect attempts             | `1000`                                                                      | `mqtt.initial-delay-ms`          |
+| `MQTT_MAX_DELAY_MS`       | Maximum delay between reconnect attempts          | `60000`                                                                     | `mqtt.max-delay-ms`              |
+| `MQTT_QOS`                | MQTT subscription QoS (0, 1, or 2)                | `1`                                                                         | `mqtt.qos`                       |
+| `KAFKA_BOOTSTRAP_SERVERS` | Comma-separated list of Kafka bootstrap servers   | `localhost:9092`                                                            | `spring.kafka.bootstrap-servers` |
+| `KAFKA_SENSOR_TOPIC`      | Kafka topic for room and air sensor data          | `sensor-data`                                                               | `kafka.producer.topics.sensor`   |
+| `KAFKA_EVENT_TOPIC`       | Kafka topic for opening and presence events       | `event-data`                                                                | `kafka.producer.topics.event`    |
+| `KAFKA_STATUS_TOPIC`      | Kafka topic for gateway status data               | `status-data`                                                               | `kafka.producer.topics.status`   |
+| `KAFKA_DLQ_TOPIC`         | Kafka topic for invalid (poison) sensor payloads  | `sensor-data-dlq`                                                           | `kafka.producer.topics.dlq`      |
 
 ### Setting Environment Variables in Kubernetes
 
@@ -96,6 +103,12 @@ env:
 
 ## Kubernetes
 
+Prefer Ingress (see the [root README](../../README.md#access-services-through-ingress)):
+
+```bash
+curl -H 'Host: sensors-data-collector.local' "http://$(minikube ip)/live"
+```
+
 From the repository root, install the chart with an image from your container
 registry:
 
@@ -111,7 +124,7 @@ kubectl rollout status deployment/sensors-data-collector
 The chart configures port `8083` and uses `/live` and `/ready` for Kubernetes
 probes. Ready probes depend on MQTT connectivity and Kafka reachability.
 
-Access it locally with:
+Fallback without Ingress:
 
 ```bash
 kubectl port-forward service/sensors-data-collector 8083:8083
@@ -132,7 +145,7 @@ The service can be deployed with:
 
 ```bash
 make build SERVICE=sensors-data-collector
-make k8s-load SERVICE=sensors-data-collector
+make k8s-load SERVICE=sensors-data-collector IMAGE=localhost/sensors-data-collector:dev
 make k8s-deploy SERVICE=sensors-data-collector
 ```
 

@@ -6,23 +6,35 @@ Breathing House contains the services and deployment assets for the home environ
 
 ```text
 svc/                         Service source code
-  environment-monitor/       Environment monitoring service
-  alert-notifier/            Alert notification service
-  home-dashboard/            Home dashboard
-  occupancy-monitor/         Occupancy monitoring service
-  sensors-data-collector/    Sensor data collection service
-deploy/helm/                 One Helm chart per deployable service
+  environment-monitor/       Consumes Kafka sensor-data
+  occupancy-monitor/         Consumes Kafka event-data
+  alert-notifier/            Alert notification service (health-only for now)
+  home-dashboard/            Static Vite/React start page
+  sensors-data-collector/    MQTT → Kafka collector
+deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
+deploy/observability/        Loki, Alloy, and Grafana Helm values
+tests/robot/                 Robot Framework night-regression suite
 Makefile                     Repository-wide build and deployment commands
-.github/workflows/           Independent CI workflow per service
+.github/workflows/           Independent CI workflow per service (+ shared workflows)
 docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
 ```
+
+Kafka for local Kubernetes is installed by `make k8s-kafka` (inline manifests), not a Helm chart. MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
 
 ## Services
 
 Each service has its own README with local development, testing, image, and
-deployment instructions. Backend services keep their HTTP contract in an
-`openapi.yaml` file. Go services additionally use `oapi-codegen` to generate
-typed server interfaces. Spring Boot services expose interactive documentation
+deployment instructions.
+
+- **environment-monitor** and **occupancy-monitor** (Go): HTTP health endpoints plus Kafka consumers (`sensor-data` / `event-data`). Domain logic is still thin (poll and log). `/ready` requires a successful Kafka ping.
+- **sensors-data-collector** (Spring Boot): consumes MQTT sensor topics, validates and transforms payloads, publishes to Kafka.
+- **alert-notifier** (Spring Boot): health endpoints only while alert delivery is built.
+- **home-dashboard** (React/Vite): static UI with mock data; not wired to live backends yet.
+
+Backend services keep their HTTP contract in an `openapi.yaml` file. Go services
+additionally use `oapi-codegen` to generate typed server interfaces (`make
+generate` from the service directory, or root `make generate` /
+`make generate-service`). Spring Boot services expose interactive documentation
 at `/swagger-ui.html` and the generated document at `/v3/api-docs`.
 
 ## Install the complete system on Kubernetes
@@ -37,17 +49,18 @@ start Kubernetes and enable the NGINX Ingress controller:
 make k8s-start
 ```
 
-Build all service images and Helm charts:
+Build all service images (podman) and Helm charts:
 
 ```bash
 make build-all
 ```
 
-Load each local image into Minikube and install each chart with Ingress enabled:
+Load each local image into Minikube and install each chart with Ingress enabled.
+`make k8s-deploy` also starts MQTT and Kafka (`k8s-start` + `k8s-mqtt` + `k8s-kafka`):
 
 ```bash
 for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
-  make k8s-load SERVICE="$service" IMAGE="$service:dev"
+  make k8s-load SERVICE="$service" IMAGE="localhost/$service:dev"
   make k8s-deploy SERVICE="$service" K8S_RELEASE="$service"
 done
 ```
@@ -131,16 +144,17 @@ curl -H 'Host: sensors-data-collector.local' "http://$MINIKUBE_IP/live"
 ```
 
 Open the dashboard at `http://home-dashboard.local` after adding the hosts
-entry. No `kubectl port-forward` is required.
+entry. Prefer Ingress over `kubectl port-forward` for local access.
 
 ## Root commands
 
-Run commands from the repository root:
+Run commands from the repository root. Local images are built with **podman**
+(`make image` / `make images` → `localhost/<service>:dev`):
 
 ```bash
 make test
 make generate
-make image IMAGE=environment-monitor:dev
+make image SERVICE=environment-monitor IMAGE=localhost/environment-monitor:dev
 make images
 make build SERVICE=environment-monitor
 make build-all
@@ -148,9 +162,18 @@ make build-changes
 make helm-lint
 make helm-template
 make helm-package
+make k8s-start
+make k8s-stop
+make k8s-mqtt
+make k8s-kafka
+make k8s-load SERVICE=environment-monitor
+make k8s-deploy SERVICE=environment-monitor
+make k8s-observability
 ```
 
 `make build SERVICE=<service>` builds one service, including its tests, OpenAPI generation where applicable, Helm lint, Helm packaging, and container image. `make build-all` runs the complete repository build and packages every chart. `make build-changes` builds and packages only services affected by the current Git changes; use `DIFF_BASE=<git-ref>` to choose the comparison base.
+
+`make k8s-deploy` depends on `k8s-start`, `k8s-mqtt`, and `k8s-kafka`.
 
 `make helm-template` and `make helm-package` operate on the selected service.
 Set `SERVICE` to choose the chart, for example:
@@ -229,6 +252,10 @@ manually from GitHub Actions. It installs all five services into Kind, runs the
 Robot Framework suite under `tests/robot`, and uploads the Robot report and
 Kubernetes diagnostics as the `night-regression-results-<run-number>` artifact.
 
+The scheduled logging-integration workflow installs a Kind logging stack
+(MQTT/Kafka plus observability components) and verifies log shipping; see
+`.github/workflows/logging-integration.yaml`.
+
 The biweekly release workflow runs at midnight UTC every 14 days on Mondays and
 can also be started manually from GitHub Actions. It creates a dated GitHub
 Release from the current `main` commit when commits exist since the previous
@@ -241,6 +268,7 @@ For a local Kubernetes cluster on WSL, see
 make build SERVICE=environment-monitor
 make k8s-load SERVICE=environment-monitor
 make k8s-mqtt
+make k8s-kafka
 make k8s-observability
 make k8s-deploy SERVICE=environment-monitor
 ```
