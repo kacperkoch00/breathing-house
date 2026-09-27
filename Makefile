@@ -209,8 +209,14 @@ k8s-observability: k8s-start
 	helm upgrade --install prometheus prometheus-community/prometheus \
 		--namespace observability \
 		-f deploy/observability/prometheus-values.yaml
+	kubectl create configmap breathing-house-dashboards \
+		--namespace observability \
+		--from-file=deploy/observability/dashboards/ \
+		--dry-run=client -o yaml | kubectl apply -f -
 	helm upgrade --install grafana grafana-community/grafana \
 		--namespace observability \
 		-f deploy/observability/grafana-values.yaml
+	kubectl rollout restart deployment/grafana --namespace observability
+	kubectl rollout status deployment/grafana --namespace observability --timeout=180s
 
 k8s-grafana: k8s-observability
