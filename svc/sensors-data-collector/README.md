@@ -151,6 +151,25 @@ sensor-data
 status-data
 ```
 
+## Kafka Message Envelope
+
+Transformed messages published to Kafka use this JSON envelope (`SensorData`):
+
+| Field           | Type              | Description                                                                 |
+| :-------------- | :---------------- | :-------------------------------------------------------------------------- |
+| `schemaVersion` | `int`             | Always `1` (`SensorData.SCHEMA_VERSION`)                                    |
+| `roomId`        | `string`          | Room id from the MQTT topic (or `gateway` for status)                       |
+| `deviceId`      | `string` or null  | Optional textual `deviceId` from the MQTT payload                           |
+| `type`          | `SensorType`      | `ROOM`, `AIR`, `OPENING`, `PRESENCE`, or `STATUS`                           |
+| `observedAt`    | `Instant`         | From payload `timestamp` when parseable; otherwise set at transform time    |
+| `receivedAt`    | `Instant`         | Always set to transform time (`Instant.now()`)                              |
+| `values`        | `object`          | Sensor-specific fields                                                      |
+
+Payload `timestamp` parsing: ISO-8601 strings via `Instant.parse`; numbers greater
+than `1e12` as epoch millis, otherwise epoch seconds. Unparseable values fall back
+to transform time without failing the message. The Kafka record key remains
+`roomId`.
+
 ## End-to-End Flow
 
 The service processes sensor data using the following flow:

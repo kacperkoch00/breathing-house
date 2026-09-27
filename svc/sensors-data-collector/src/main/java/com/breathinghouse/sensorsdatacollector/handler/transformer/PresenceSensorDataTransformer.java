@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -40,7 +39,12 @@ public class PresenceSensorDataTransformer implements SensorDataTransformer {
 
             boolean present = isPresent(presence);
 
-            return new SensorData(roomId, SensorType.PRESENCE, Instant.now(), Map.of("present", present));
+            return SensorDataFactory.create(
+                    roomId,
+                    SensorType.PRESENCE,
+                    root,
+                    Map.of("present", present)
+            );
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid presence sensor payload: " + payload, e);
         }

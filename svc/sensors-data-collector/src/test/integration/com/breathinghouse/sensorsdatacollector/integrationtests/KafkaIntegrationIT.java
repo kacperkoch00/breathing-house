@@ -93,9 +93,11 @@ class KafkaIntegrationIT {
 
         assertThat(record.topic()).isEqualTo(kafkaTopic);
         assertThat(record.key()).isEqualTo(mqttTopic.equals("home/gateway/status") ? "gateway" : "kitchen");
+        assertThat(message.get("schemaVersion").asInt()).isEqualTo(1);
         assertThat(message.get("roomId").asText()).isEqualTo(mqttTopic.equals("home/gateway/status") ? "gateway" : "kitchen");
         assertThat(message.get("type").asText()).isEqualTo(sensorType);
-        assertThat(message.get("timestamp")).isNotNull();
+        assertThat(message.get("observedAt")).isNotNull();
+        assertThat(message.get("receivedAt")).isNotNull();
         assertThat(message.get("values")).isNotNull();
     }
 

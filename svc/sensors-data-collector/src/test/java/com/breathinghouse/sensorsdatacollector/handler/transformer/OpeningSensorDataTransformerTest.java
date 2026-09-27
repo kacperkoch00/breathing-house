@@ -36,9 +36,12 @@ class OpeningSensorDataTransformerTest {
 
         SensorData result = transformer.transform(payload, "kitchen");
 
+        assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
         assertEquals("kitchen", result.roomId());
+        assertNull(result.deviceId());
         assertEquals(SensorType.OPENING, result.type());
-        assertNotNull(result.timestamp());
+        assertNotNull(result.observedAt());
+        assertNotNull(result.receivedAt());
         assertEquals(Map.of("open", true), result.values());
     }
 
@@ -54,7 +57,8 @@ class OpeningSensorDataTransformerTest {
 
         assertEquals("kitchen", result.roomId());
         assertEquals(SensorType.OPENING, result.type());
-        assertNotNull(result.timestamp());
+        assertNotNull(result.observedAt());
+        assertNotNull(result.receivedAt());
         assertEquals(Map.of("open", false), result.values());
     }
 
@@ -119,7 +123,35 @@ class OpeningSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetTimestampDuringTransformation() {
+    void shouldUseObservedAtFromIsoTimestamp() {
+        String payload = """
+                {
+                    "state": "OPEN",
+                    "timestamp": "2024-01-15T10:30:00Z"
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
+    }
+
+    @Test
+    void shouldUseObservedAtFromEpochMillis() {
+        String payload = """
+                {
+                    "state": "OPEN",
+                    "timestamp": 1704312600000
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
+    }
+
+    @Test
+    void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
                     "state": "OPEN"
@@ -132,7 +164,23 @@ class OpeningSensorDataTransformerTest {
 
         Instant after = Instant.now();
 
-        assertFalse(result.timestamp().isBefore(before));
-        assertFalse(result.timestamp().isAfter(after));
+        assertFalse(result.observedAt().isBefore(before));
+        assertFalse(result.observedAt().isAfter(after));
+        assertFalse(result.receivedAt().isBefore(before));
+        assertFalse(result.receivedAt().isAfter(after));
+    }
+
+    @Test
+    void shouldSetDeviceIdWhenPresent() {
+        String payload = """
+                {
+                    "state": "OPEN",
+                    "deviceId": "door-1"
+                }
+                """;
+
+        SensorData result = transformer.transform(payload, "kitchen");
+
+        assertEquals("door-1", result.deviceId());
     }
 }

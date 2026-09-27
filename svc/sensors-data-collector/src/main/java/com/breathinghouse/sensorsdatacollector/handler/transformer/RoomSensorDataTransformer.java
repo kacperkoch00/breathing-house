@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -40,7 +39,7 @@ public class RoomSensorDataTransformer implements SensorDataTransformer {
                 values.put("lightLevel", determineLightLevel(light.doubleValue()));
             }
 
-            return new SensorData(roomId, SensorType.ROOM, Instant.now(), values);
+            return SensorDataFactory.create(roomId, SensorType.ROOM, values);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid room sensor payload: " + payload, e);
         }

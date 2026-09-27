@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -38,7 +37,12 @@ public class OpeningSensorDataTransformer implements SensorDataTransformer {
         try {
             JsonNode root = objectMapper.readTree(payload);
             String state = root.path("state").asText();
-            return new SensorData(roomId, SensorType.OPENING, Instant.now(), Map.of("open", isOpen(state)));
+            return SensorDataFactory.create(
+                    roomId,
+                    SensorType.OPENING,
+                    root,
+                    Map.of("open", isOpen(state))
+            );
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid opening sensor payload: " + payload, e);
         }

@@ -54,7 +54,8 @@ class TransformedSensorDataProducerTest {
             "STATUS, status-data"
     })
     void shouldSendDataToCorrectTopic(SensorType type, String expectedTopic) {
-        SensorData sensorData = new SensorData("kitchen", type, Instant.now(), Map.of());
+        Instant now = Instant.now();
+        SensorData sensorData = new SensorData(SensorData.SCHEMA_VERSION, "kitchen", null, type, now, now, Map.of());
         SendResult<String, SensorData> sendResult = successfulSendResult(expectedTopic);
         when(kafkaTemplate.send(anyString(), anyString(), any(SensorData.class)))
                 .thenReturn(CompletableFuture.completedFuture(sendResult));
@@ -66,7 +67,8 @@ class TransformedSensorDataProducerTest {
 
     @Test
     void shouldNotThrowWhenSendFutureFails() {
-        SensorData sensorData = new SensorData("kitchen", SensorType.ROOM, Instant.now(), Map.of());
+        Instant now = Instant.now();
+        SensorData sensorData = new SensorData(SensorData.SCHEMA_VERSION, "kitchen", null, SensorType.ROOM, now, now, Map.of());
         when(kafkaTemplate.send(eq("sensor-data"), eq("kitchen"), eq(sensorData)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker unavailable")));
 

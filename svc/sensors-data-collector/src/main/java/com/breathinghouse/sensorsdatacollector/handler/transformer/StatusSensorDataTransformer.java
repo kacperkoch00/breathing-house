@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -33,7 +32,7 @@ public class StatusSensorDataTransformer implements SensorDataTransformer {
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
-            return new SensorData(roomId, SensorType.STATUS, Instant.now(), values);
+            return SensorDataFactory.create(roomId, SensorType.STATUS, values);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid status sensor payload: " + payload, e);
         }
