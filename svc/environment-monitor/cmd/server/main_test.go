@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"environment-monitor/internal/handler"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -28,6 +29,15 @@ func TestNewHTTPServerHealthRoutes(t *testing.T) {
 
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+			}
+
+			if path == "/metrics" {
+				body := recorder.Body.String()
+				for _, name := range []string{"go_goroutines", "promhttp_metric_handler_requests_total"} {
+					if !strings.Contains(body, name) {
+						t.Fatalf("/metrics body missing %q", name)
+					}
+				}
 			}
 		})
 	}
