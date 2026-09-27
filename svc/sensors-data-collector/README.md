@@ -172,6 +172,24 @@ written to the DLQ topic (`sensor-data-dlq` by default) as a `PoisonMessage`.
 Optional envelope fields `timestamp` and `deviceId` remain optional. Empty `{}`
 payloads for `ROOM` / `AIR` / `STATUS` are rejected.
 
+## Metrics
+
+Micrometer counters for the collector pipeline are exposed for Prometheus scraping at
+`GET /actuator/prometheus`. Custom `/live` and `/ready` are unchanged. Grafana
+dashboards and ServiceMonitor CRDs are out of scope; scrape the actuator path only.
+
+| Counter | Tags | When |
+| :------ | :--- | :--- |
+| `sensor.messages.received` | `type` (`ROOM`, `AIR`, …) | Before transform, after type/transformer resolved |
+| `sensor.messages.published` | `type` | Kafka ack success for transformed sensor data |
+| `sensor.messages.rejected` | `type` | Invalid payload (before DLQ publish) |
+| `sensor.messages.ignored` | `reason` (`invalid_topic`, `unknown_type`, `no_transformer`) | Message dropped without transform |
+| `sensor.publish.failed` | `kind` (`sensor`, `dlq`) | Kafka publish failure in `whenComplete` |
+
+```bash
+curl http://localhost:8083/actuator/prometheus
+```
+
 ## Kafka Message Envelope
 
 Transformed messages published to Kafka use this JSON envelope (`SensorData`):

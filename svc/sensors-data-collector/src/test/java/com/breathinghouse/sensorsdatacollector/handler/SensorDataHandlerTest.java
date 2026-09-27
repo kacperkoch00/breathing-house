@@ -6,10 +6,12 @@ import com.breathinghouse.sensorsdatacollector.handler.transformer.PresenceSenso
 import com.breathinghouse.sensorsdatacollector.handler.transformer.RoomSensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
 import com.breathinghouse.sensorsdatacollector.handler.transformer.StatusSensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.metrics.SensorMetrics;
 import com.breathinghouse.sensorsdatacollector.producer.PoisonMessage;
 import com.breathinghouse.sensorsdatacollector.producer.PoisonMessageProducer;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,12 +35,16 @@ class SensorDataHandlerTest {
     private SensorDataHandler handler;
     private TransformedSensorDataProducer producer;
     private PoisonMessageProducer poisonMessageProducer;
+    private SimpleMeterRegistry meterRegistry;
+    private SensorMetrics metrics;
 
     @BeforeEach
     void setUp() {
         ObjectMapper mapper = new ObjectMapper();
         producer = Mockito.mock(TransformedSensorDataProducer.class);
         poisonMessageProducer = Mockito.mock(PoisonMessageProducer.class);
+        meterRegistry = new SimpleMeterRegistry();
+        metrics = new SensorMetrics(meterRegistry);
 
         List<SensorDataTransformer> transformers = List.of(
                 new RoomSensorDataTransformer(mapper),
@@ -48,7 +54,7 @@ class SensorDataHandlerTest {
                 new StatusSensorDataTransformer(mapper)
         );
 
-        handler = new SensorDataHandler(transformers, producer, poisonMessageProducer);
+        handler = new SensorDataHandler(transformers, producer, poisonMessageProducer, metrics);
     }
 
     @ParameterizedTest
@@ -73,6 +79,8 @@ class SensorDataHandlerTest {
 
         verify(producer).send(any(SensorData.class));
         verify(poisonMessageProducer, never()).send(any());
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.RECEIVED, "type", SensorType.from(sensorType).name()).count());
+        assertEquals(0.0, meterRegistry.counter(SensorMetrics.REJECTED, "type", SensorType.from(sensorType).name()).count());
     }
 
     @Test
@@ -92,6 +100,8 @@ class SensorDataHandlerTest {
         assertEquals("{}", poisonMessage.payload());
         assertEquals("home/kitchen/air", poisonMessage.mqttTopic());
         assertFalse(poisonMessage.reason() == null || poisonMessage.reason().isBlank());
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.RECEIVED, "type", "AIR").count());
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.REJECTED, "type", "AIR").count());
     }
 
     @ParameterizedTest
@@ -110,6 +120,10 @@ class SensorDataHandlerTest {
 
         verify(producer, never()).send(any());
         verify(poisonMessageProducer, never()).send(any());
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.IGNORED, "reason", "invalid_topic").count());
+        assertEquals(0.0, meterRegistry.find(SensorMetrics.RECEIVED).counters().stream()
+                .mapToDouble(c -> c.count())
+                .sum());
     }
 
     @Test
@@ -120,6 +134,7 @@ class SensorDataHandlerTest {
 
         verify(producer, never()).send(any());
         verify(poisonMessageProducer, never()).send(any());
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.IGNORED, "reason", "unknown_type").count());
     }
 
     @Test
@@ -145,12 +160,15 @@ class SensorDataHandlerTest {
             }
         };
 
+        SimpleMeterRegistry localRegistry = new SimpleMeterRegistry();
+        SensorMetrics localMetrics = new SensorMetrics(localRegistry);
         TransformedSensorDataProducer producerWithoutAir = Mockito.mock(TransformedSensorDataProducer.class);
         PoisonMessageProducer poisonWithoutAir = Mockito.mock(PoisonMessageProducer.class);
         SensorDataHandler handlerWithoutAir = new SensorDataHandler(
                 List.of(transformer),
                 producerWithoutAir,
-                poisonWithoutAir
+                poisonWithoutAir,
+                localMetrics
         );
 
         assertDoesNotThrow(() ->
@@ -159,5 +177,6 @@ class SensorDataHandlerTest {
 
         verify(producerWithoutAir, never()).send(any());
         verify(poisonWithoutAir, never()).send(any());
+        assertEquals(1.0, localRegistry.counter(SensorMetrics.IGNORED, "reason", "no_transformer").count());
     }
 }

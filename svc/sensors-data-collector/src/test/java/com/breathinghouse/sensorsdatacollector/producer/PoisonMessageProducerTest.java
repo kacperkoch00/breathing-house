@@ -1,5 +1,7 @@
 package com.breathinghouse.sensorsdatacollector.producer;
 
+import com.breathinghouse.sensorsdatacollector.metrics.SensorMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +16,7 @@ import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -27,6 +30,7 @@ class PoisonMessageProducerTest {
     @Mock
     private KafkaTemplate<String, PoisonMessage> kafkaTemplate;
 
+    private SimpleMeterRegistry meterRegistry;
     private PoisonMessageProducer producer;
 
     @BeforeEach
@@ -37,8 +41,12 @@ class PoisonMessageProducerTest {
                 "status-data",
                 "sensor-data-dlq"
         );
-
-        producer = new PoisonMessageProducer(kafkaTemplate, topicProperties);
+        meterRegistry = new SimpleMeterRegistry();
+        producer = new PoisonMessageProducer(
+                kafkaTemplate,
+                topicProperties,
+                new SensorMetrics(meterRegistry)
+        );
     }
 
     @Test
@@ -58,6 +66,7 @@ class PoisonMessageProducerTest {
         producer.send(poisonMessage);
 
         verify(kafkaTemplate).send("sensor-data-dlq", "kitchen", poisonMessage);
+        assertEquals(0.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "dlq").count());
     }
 
     @Test
@@ -76,6 +85,7 @@ class PoisonMessageProducerTest {
         assertDoesNotThrow(() -> producer.send(poisonMessage));
 
         verify(kafkaTemplate).send("sensor-data-dlq", "kitchen", poisonMessage);
+        assertEquals(1.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "dlq").count());
     }
 
     @SuppressWarnings("unchecked")
