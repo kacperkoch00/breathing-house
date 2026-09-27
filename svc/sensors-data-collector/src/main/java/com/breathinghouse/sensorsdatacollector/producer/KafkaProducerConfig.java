@@ -48,6 +48,37 @@ public class KafkaProducerConfig {
         return new KafkaTemplate<>(producerFactory);
     }
 
+    @Bean
+    public ProducerFactory<String, PoisonMessage> poisonMessageProducerFactory(
+            KafkaProperties kafkaProperties
+    ) {
+        Map<String, Object> properties = new HashMap<>();
+
+        properties.put(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                kafkaProperties.getBootstrapServers()
+        );
+        properties.put(
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
+                StringSerializer.class
+        );
+        properties.put(
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+                JsonSerializer.class
+        );
+        properties.put(ProducerConfig.ACKS_CONFIG, "all");
+        properties.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+
+        return new DefaultKafkaProducerFactory<>(properties);
+    }
+
+    @Bean
+    public KafkaTemplate<String, PoisonMessage> poisonMessageKafkaTemplate(
+            ProducerFactory<String, PoisonMessage> poisonMessageProducerFactory
+    ) {
+        return new KafkaTemplate<>(poisonMessageProducerFactory);
+    }
+
     @Bean(destroyMethod = "close")
     public AdminClient kafkaAdminClient(KafkaProperties kafkaProperties) {
         Map<String, Object> properties = new HashMap<>();

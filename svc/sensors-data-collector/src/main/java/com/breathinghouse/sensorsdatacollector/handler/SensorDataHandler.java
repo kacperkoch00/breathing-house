@@ -1,6 +1,8 @@
 package com.breathinghouse.sensorsdatacollector.handler;
 
 import com.breathinghouse.sensorsdatacollector.handler.transformer.SensorDataTransformer;
+import com.breathinghouse.sensorsdatacollector.producer.PoisonMessage;
+import com.breathinghouse.sensorsdatacollector.producer.PoisonMessageProducer;
 import com.breathinghouse.sensorsdatacollector.producer.TransformedSensorDataProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +10,7 @@ import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -19,10 +22,16 @@ public class SensorDataHandler {
 
     private final Map<SensorType, SensorDataTransformer> transformers;
     private final TransformedSensorDataProducer transformedSensorDataProducer;
+    private final PoisonMessageProducer poisonMessageProducer;
 
-    public SensorDataHandler(List<SensorDataTransformer> transformers, TransformedSensorDataProducer transformedSensorDataProducer) {
+    public SensorDataHandler(
+            List<SensorDataTransformer> transformers,
+            TransformedSensorDataProducer transformedSensorDataProducer,
+            PoisonMessageProducer poisonMessageProducer
+    ) {
         this.transformers = new EnumMap<>(SensorType.class);
         this.transformedSensorDataProducer = transformedSensorDataProducer;
+        this.poisonMessageProducer = poisonMessageProducer;
 
         transformers.forEach(transformer ->
                 this.transformers.put(transformer.supportedType(), transformer)
@@ -73,6 +82,14 @@ public class SensorDataHandler {
                     e.getMessage(),
                     payload
             );
+            poisonMessageProducer.send(new PoisonMessage(
+                    Instant.now(),
+                    topic,
+                    sensorTopic.roomId(),
+                    sensorType.name(),
+                    e.getMessage(),
+                    payload
+            ));
         }
     }
 }

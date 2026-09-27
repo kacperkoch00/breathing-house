@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record KafkaTopicProperties(
         String sensor,
         String event,
-        String status
+        String status,
+        String dlq
 ) {
 }

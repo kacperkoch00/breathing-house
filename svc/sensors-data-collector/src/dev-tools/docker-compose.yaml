@@ -40,4 +40,5 @@ services:
         done;
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server breathinghouse-kafka:9093 --create --if-not-exists --topic sensor-data;
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server breathinghouse-kafka:9093 --create --if-not-exists --topic event-data;
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server breathinghouse-kafka:9093 --create --if-not-exists --topic status-data;"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server breathinghouse-kafka:9093 --create --if-not-exists --topic status-data;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server breathinghouse-kafka:9093 --create --if-not-exists --topic sensor-data-dlq;"
