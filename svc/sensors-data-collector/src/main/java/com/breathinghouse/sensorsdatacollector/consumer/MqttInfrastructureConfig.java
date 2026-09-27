@@ -4,8 +4,10 @@ import com.hivemq.client.mqtt.MqttClient;
 import com.hivemq.client.mqtt.lifecycle.MqttClientConnectedContext;
 import com.hivemq.client.mqtt.lifecycle.MqttClientDisconnectedContext;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
+import com.hivemq.client.mqtt.mqtt5.lifecycle.Mqtt5ClientConnectedContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.integration.channel.DirectChannel;
@@ -25,7 +27,10 @@ public class MqttInfrastructureConfig {
     }
 
     @Bean
-    public Mqtt5AsyncClient hiveMqClient(SensorDataConsumerConfig config) {
+    public Mqtt5AsyncClient hiveMqClient(
+            SensorDataConsumerConfig config,
+            ObjectProvider<SensorDataConsumer> sensorDataConsumer
+    ) {
         return MqttClient.builder()
                 .useMqttVersion5()
                 .identifier(config.getClientId() + "-" + UUID.randomUUID())
@@ -36,7 +41,7 @@ public class MqttInfrastructureConfig {
                 .maxDelay(config.getMaxDelayMs(), TimeUnit.MILLISECONDS)
                 .applyAutomaticReconnect()
                 .addDisconnectedListener(this::onDisconnected)
-                .addConnectedListener(this::onConnected)
+                .addConnectedListener(context -> onConnected(context, sensorDataConsumer))
                 .buildAsync();
     }
 
@@ -47,7 +52,17 @@ public class MqttInfrastructureConfig {
         );
     }
 
-    void onConnected(MqttClientConnectedContext context) {
+    void onConnected(
+            MqttClientConnectedContext context,
+            ObjectProvider<SensorDataConsumer> sensorDataConsumer
+    ) {
         log.debug("Successfully (re)connected to MQTT broker.");
+
+        if (context instanceof Mqtt5ClientConnectedContext mqtt5Context) {
+            SensorDataConsumer consumer = sensorDataConsumer.getIfAvailable();
+            if (consumer != null) {
+                consumer.onConnected(mqtt5Context);
+            }
+        }
     }
 }
