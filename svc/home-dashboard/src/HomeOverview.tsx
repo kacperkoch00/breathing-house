@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { AlertDrawer } from './AlertDrawer'
 import {
   getGatewayStatus,
   getLatestEnvironmentReading,
@@ -14,6 +15,7 @@ import {
   newestObservedAt,
   pickHighestSeverityAlert,
 } from './overview'
+import { formatEventTime } from './roomDetail'
 
 const POLL_MS = 30_000
 
@@ -42,6 +44,7 @@ const initialState: OverviewState = {
 export function HomeOverview() {
   const [state, setState] = useState<OverviewState>(initialState)
   const [clock, setClock] = useState(() => new Date())
+  const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null)
 
   const loadOverview = useCallback(async (isRefresh: boolean) => {
     if (!isRefresh) {
@@ -146,18 +149,52 @@ export function HomeOverview() {
           <h1>A quieter read<br />of your home.</h1>
           <p className="intro">{state.loadState === 'loading' ? 'Loading live home data…' : intro}</p>
         </div>
-        <div className="hero-readout">
-          <span className="readout-label">Active alerts</span>
-          <strong>{state.loadState === 'loading' && !state.fetchedAt ? '—' : alertCount}</strong>
-          <span>
-            {alertCount === 0
-              ? 'None'
-              : highestAlert
-                ? `${highestAlert.severity} · ${highestAlert.message}`
-                : 'None'}
-          </span>
-        </div>
+        {highestAlert ? (
+          <button
+            type="button"
+            className="hero-readout is-clickable"
+            onClick={() => setSelectedAlertId(highestAlert.id)}
+          >
+            <span className="readout-label">Active alerts</span>
+            <strong>{alertCount}</strong>
+            <span>
+              {highestAlert.severity} · {highestAlert.message}
+            </span>
+          </button>
+        ) : (
+          <div className="hero-readout">
+            <span className="readout-label">Active alerts</span>
+            <strong>{state.loadState === 'loading' && !state.fetchedAt ? '—' : alertCount}</strong>
+            <span>None</span>
+          </div>
+        )}
       </section>
+
+      {state.alerts.length > 0 && (
+        <section className="overview-alerts" aria-labelledby="active-alerts-heading">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Attention</p>
+              <h2 id="active-alerts-heading">Active alerts</h2>
+            </div>
+          </div>
+          <ul className="alert-list">
+            {state.alerts.map((alert) => (
+              <li key={alert.id}>
+                <button
+                  type="button"
+                  className="alert-row-button"
+                  onClick={() => setSelectedAlertId(alert.id)}
+                >
+                  <span className="alert-severity">{alert.severity}</span>
+                  <span className="alert-message">{alert.message}</span>
+                  <time dateTime={alert.triggeredAt}>{formatEventTime(alert.triggeredAt)}</time>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="overview" aria-labelledby="overview-heading">
         <div className="section-heading">
@@ -231,6 +268,8 @@ export function HomeOverview() {
         </span>
         <span>Breathing House · v0.1</span>
       </footer>
+
+      <AlertDrawer alertId={selectedAlertId} onClose={() => setSelectedAlertId(null)} />
     </main>
   )
 }

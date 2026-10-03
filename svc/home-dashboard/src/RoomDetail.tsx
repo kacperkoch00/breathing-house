@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { AlertDrawer } from './AlertDrawer'
 import {
   getLatestEnvironmentReading,
   getRoom,
@@ -65,6 +66,7 @@ export function RoomDetail() {
   const { roomId = '' } = useParams<{ roomId: string }>()
   const [state, setState] = useState<DetailState>(initialState)
   const [clock, setClock] = useState(() => new Date())
+  const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null)
 
   const loadDetail = useCallback(async () => {
     if (!roomId) {
@@ -234,9 +236,15 @@ export function RoomDetail() {
                 <ul className="alert-list">
                   {state.alerts.map((alert) => (
                     <li key={alert.id}>
-                      <span className="alert-severity">{alert.severity}</span>
-                      <span className="alert-message">{alert.message}</span>
-                      <time dateTime={alert.triggeredAt}>{formatEventTime(alert.triggeredAt)}</time>
+                      <button
+                        type="button"
+                        className="alert-row-button"
+                        onClick={() => setSelectedAlertId(alert.id)}
+                      >
+                        <span className="alert-severity">{alert.severity}</span>
+                        <span className="alert-message">{alert.message}</span>
+                        <time dateTime={alert.triggeredAt}>{formatEventTime(alert.triggeredAt)}</time>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -301,6 +309,8 @@ export function RoomDetail() {
         <span>Room detail</span>
         <span>Breathing House · v0.1</span>
       </footer>
+
+      <AlertDrawer alertId={selectedAlertId} onClose={() => setSelectedAlertId(null)} />
     </main>
   )
 }

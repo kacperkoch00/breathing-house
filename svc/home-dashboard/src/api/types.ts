@@ -59,6 +59,10 @@ export interface Alert {
   lastEvaluatedAt: string
 }
 
+export interface AlertDetail extends Alert {
+  ruleSnapshot: unknown
+}
+
 export interface PageResponse<T> {
   items: T[]
   limit: number

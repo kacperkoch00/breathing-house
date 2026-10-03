@@ -30,6 +30,9 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+          env:
+            - name: HOME_API_UPSTREAM
+              value: {{ .Values.homeApiUpstream | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
