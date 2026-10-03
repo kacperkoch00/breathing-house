@@ -1,0 +1,11 @@
+{{- if and .Values.alerts.config (not .Values.alerts.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "home-api.fullname" . }}-alerts
+  labels:
+    {{- include "home-api.labels" . | nindent 4 }}
+data:
+  alerts.json: |
+{{ .Values.alerts.config | indent 4 }}
+{{- end }}

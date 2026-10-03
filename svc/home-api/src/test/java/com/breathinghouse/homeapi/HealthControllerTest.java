@@ -1,5 +1,6 @@
 package com.breathinghouse.homeapi;
 
+import com.breathinghouse.homeapi.alerts.AlertRepository;
 import com.breathinghouse.homeapi.history.HistoryRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ class HealthControllerTest {
     @MockitoBean
     private HistoryRepository historyRepository;
 
+    @MockitoBean
+    private AlertRepository alertRepository;
+
     @Test
     void getLiveReturnsOkEvenWhenDatabaseUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(false);
@@ -33,6 +37,7 @@ class HealthControllerTest {
     @Test
     void getReadyReturnsReadyWhenTablesQueryable() throws Exception {
         when(historyRepository.isReady()).thenReturn(true);
+        when(alertRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isOk())
@@ -42,6 +47,16 @@ class HealthControllerTest {
     @Test
     void getReadyReturns503WhenDatabaseUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(false);
+
+        mockMvc.perform(get("/ready"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string("NOT_READY\n"));
+    }
+
+    @Test
+    void getReadyReturns503WhenAlertTablesUnavailable() throws Exception {
+        when(historyRepository.isReady()).thenReturn(true);
+        when(alertRepository.isReady()).thenReturn(false);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isServiceUnavailable())

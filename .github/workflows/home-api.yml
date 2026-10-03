@@ -94,8 +94,30 @@ jobs:
           DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/breathing_house
           DATABASE_USERNAME: bh
           DATABASE_PASSWORD: bh
+          PGPASSWORD: bh
+          ALERT_CONFIG_PATH: /tmp/home-api-alerts.json
         run: |
           set -euo pipefail
+          cat >/tmp/home-api-alerts.json <<'JSON'
+          {
+            "evaluationInterval": "1s",
+            "alerts": [{
+              "id": "ci-high-co2",
+              "type": "THRESHOLD",
+              "source": "ENVIRONMENT",
+              "sensorType": "AIR",
+              "metric": "CO2",
+              "operator": "GREATER_THAN",
+              "threshold": 600,
+              "for": "0s",
+              "maxDataAge": "36500d",
+              "severity": "WARNING",
+              "rooms": ["living-room"],
+              "message": "CI CO2 alert in {{roomId}} at {{value}}"
+            }]
+          }
+          JSON
+
           java -jar target/home-api-0.1.0-SNAPSHOT.jar --server.port=18082 >/tmp/home-api.log 2>&1 &
           pid=$!
           cleanup() {
@@ -143,6 +165,23 @@ jobs:
             .items[0].open == null and
             .items[0].observedAt == "2026-10-03T10:30:00Z"
           '
+
+          for attempt in $(seq 1 30); do
+            active_alerts="$(psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+              "SELECT count(*) FROM home_api.alert WHERE rule_id = 'ci-high-co2' AND status = 'ACTIVE'")"
+            if test "$active_alerts" = "1"; then
+              break
+            fi
+            if test "$attempt" -eq 30; then
+              echo "expected active CI alert was not created"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+            "SELECT message FROM home_api.alert WHERE rule_id = 'ci-high-co2' AND status = 'ACTIVE'" \
+            | grep -q 'CI CO2 alert in living-room at 700'
       - name: Helm lint
         run: helm lint deploy/helm/home-api
       - name: Package Helm chart

@@ -5,7 +5,8 @@ info:
   description: >
     Frontend-facing Breathing House API for room history and alerts.
     This revision exposes read-only room discovery and paginated environment
-    and occupancy history. Alert APIs are not implemented yet.
+    and occupancy history, and evaluates configurable alert rules internally.
+    Alert APIs are not implemented yet.
 
 paths:
   /live:

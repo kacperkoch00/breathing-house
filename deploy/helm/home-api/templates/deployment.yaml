@@ -35,6 +35,16 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if or .Values.alerts.config .Values.alerts.existingConfigMap }}
+            - name: ALERT_CONFIG_PATH
+              value: /etc/home-api/alerts/alerts.json
+            {{- end }}
+          {{- if or .Values.alerts.config .Values.alerts.existingConfigMap }}
+          volumeMounts:
+            - name: alerts
+              mountPath: /etc/home-api/alerts
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /live
@@ -45,3 +55,9 @@ spec:
               port: http
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if or .Values.alerts.config .Values.alerts.existingConfigMap }}
+      volumes:
+        - name: alerts
+          configMap:
+            name: {{ default (printf "%s-alerts" (include "home-api.fullname" .)) .Values.alerts.existingConfigMap }}
+      {{- end }}

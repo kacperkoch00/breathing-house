@@ -1,8 +1,8 @@
 # Home API
 
 Frontend-facing Breathing House API (BFF) for `home-dashboard`. It is the
-read/query boundary over historical environment and occupancy data. Alert
-persistence and alert APIs are planned but not implemented yet.
+read/query boundary over historical environment and occupancy data. It also
+evaluates configurable alert rules and persists alert lifecycle state.
 
 ## Architectural responsibility
 
@@ -35,9 +35,12 @@ Default JDBC settings:
 | `DATABASE_CONNECTION_TIMEOUT_MS` | `2000` |
 | `DATABASE_QUERY_TIMEOUT_SECONDS` | `2` |
 | `CORS_ALLOWED_ORIGINS` | `http://home-dashboard.local,http://localhost:5173` |
+| `ALERT_CONFIG_PATH` | packaged `alerts/default-alerts.json` |
+| `ALERT_SCHEDULING_ENABLED` | `true` |
 
-Local/dev defaults use the shared `bh` user. Production should inject a
-read-only database user through a Kubernetes Secret.
+Local/dev defaults use the shared `bh` user. Production should inject a user
+that can read the monitor schemas and write only the `home_api` alert schema
+through a Kubernetes Secret.
 
 The service listens on port `8082` by default.
 
@@ -64,11 +67,73 @@ Pagination uses `limit + 1` internally and returns `hasMore`. Responses never
 include Kafka topic/partition/offset fields. CORS is enabled for `/api/**`
 against the configured origin allowlist.
 
+## Alert evaluation
+
+The service evaluates alert rules with a non-overlapping fixed delay. The
+packaged defaults run every 10 seconds and include high CO2/humidity,
+low humidity, high/low temperature, an opening left open, and stale AIR/ROOM
+data.
+
+Rules are loaded from `classpath:/alerts/default-alerts.json`. Set
+`ALERT_CONFIG_PATH` to an external JSON file to override them. The file is
+checked before every evaluation; a valid change is applied without restart.
+When a changed file is invalid, the service logs the error and keeps using the
+last valid configuration.
+
+```json
+{
+  "evaluationInterval": "10s",
+  "alerts": [{
+    "id": "high-co2",
+    "enabled": true,
+    "type": "THRESHOLD",
+    "source": "ENVIRONMENT",
+    "sensorType": "AIR",
+    "metric": "CO2",
+    "operator": "GREATER_THAN",
+    "threshold": 1500,
+    "for": "5m",
+    "maxDataAge": "2m",
+    "severity": "WARNING",
+    "rooms": ["*"],
+    "message": "CO2 in {{roomId}} is {{value}} ppm"
+  }]
+}
+```
+
+Supported rule types:
+
+- `THRESHOLD`: numeric ROOM/AIR metrics with an operator and hold duration
+- `BOOLEAN_STATE`: `PRESENT` or `OPEN` equal to a configured boolean
+- `STALE_DATA`: latest matching reading/event is older than `for`
+
+Durations accept `ms`, `s`, `m`, `h`, `d`, or ISO-8601 values. Room lists can
+contain explicit room IDs or `"*"`. Message placeholders are limited to
+`{{roomId}}`, `{{deviceId}}`, `{{value}}`, `{{threshold}}`, and
+`{{duration}}`; configuration cannot execute SQL or code.
+
+Pending condition state and active/resolved alert history are stored in
+`home_api.alert_state` and `home_api.alert`. Flyway creates and upgrades these
+tables at startup. Active alerts are deduplicated per rule, room, and device.
+Cleared conditions resolve rather than delete alerts.
+
+For local Helm installs, use the packaged defaults or provide a file:
+
+```bash
+helm upgrade --install home-api deploy/helm/home-api \
+  --set-file alerts.config=./alerts.json
+```
+
+An existing ConfigMap with an `alerts.json` key can be used through
+`alerts.existingConfigMap`. Alert REST endpoints and notification delivery are
+not implemented yet.
+
 ## Readiness
 
 - `/live` is always `200` while the process is running
 - `/ready` is `200` only when `environment.environment_reading` and
-  `occupancy.occupancy_event` are queryable; otherwise `503`
+  `occupancy.occupancy_event`, `home_api.alert`, and `home_api.alert_state` are
+  queryable; otherwise `503`
 
 ## Metrics
 
