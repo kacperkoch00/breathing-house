@@ -137,10 +137,15 @@ export function HomeOverview() {
           <span className="brand-mark" aria-hidden="true">BH</span>
           <span>Breathing House</span>
         </Link>
-        <span className={`status${state.gatewayOnline === false ? ' is-offline' : ''}`}>
-          <span className="status-dot" />
-          {gatewayLabel}
-        </span>
+        <div className="topbar-meta">
+          <Link className="nav-link" to="/setup">
+            Setup
+          </Link>
+          <span className={`status${state.gatewayOnline === false ? ' is-offline' : ''}`}>
+            <span className="status-dot" />
+            {gatewayLabel}
+          </span>
+        </div>
       </nav>
 
       <section className="hero">

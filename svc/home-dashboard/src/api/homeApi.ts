@@ -9,6 +9,8 @@ import type {
   PageResponse,
   RoomSummary,
   RoomsResponse,
+  SensorSummary,
+  SensorsResponse,
   SensorType,
 } from './types'
 
@@ -16,8 +18,8 @@ export class HomeApiError extends Error {
   readonly status: number
   readonly path: string
 
-  constructor(status: number, path: string) {
-    super(`home-api ${path} failed (${status})`)
+  constructor(status: number, path: string, message?: string) {
+    super(message ?? `home-api ${path} failed (${status})`)
     this.name = 'HomeApiError'
     this.status = status
     this.path = path
@@ -30,12 +32,49 @@ export function getHomeApiBaseUrl(): string {
   return configured && configured.length > 0 ? configured.replace(/\/$/, '') : ''
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${getHomeApiBaseUrl()}${path}`)
-  if (!response.ok) {
-    throw new HomeApiError(response.status, path)
+interface FetchJsonOptions {
+  method?: string
+  body?: unknown
+  headers?: Record<string, string>
+}
+
+async function fetchJson<T>(path: string, options: FetchJsonOptions = {}): Promise<T> {
+  const headers: Record<string, string> = { ...options.headers }
+  let body: string | undefined
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify(options.body)
   }
+
+  const response = await fetch(`${getHomeApiBaseUrl()}${path}`, {
+    method: options.method ?? 'GET',
+    headers,
+    body,
+  })
+
+  if (!response.ok) {
+    throw new HomeApiError(response.status, path, await readErrorMessage(response))
+  }
+
   return response.json() as Promise<T>
+}
+
+async function readErrorMessage(response: Response): Promise<string | undefined> {
+  try {
+    const data: unknown = await response.json()
+    if (
+      data &&
+      typeof data === 'object' &&
+      'message' in data &&
+      typeof (data as { message: unknown }).message === 'string'
+    ) {
+      const message = (data as { message: string }).message.trim()
+      return message.length > 0 ? message : undefined
+    }
+  } catch {
+    // Fall back to status+path when the body is not JSON.
+  }
+  return undefined
 }
 
 export function getGatewayStatus(): Promise<GatewayStatusResponse> {
@@ -48,6 +87,51 @@ export function listRooms(): Promise<RoomsResponse> {
 
 export function getRoom(roomId: string): Promise<RoomSummary> {
   return fetchJson<RoomSummary>(`/api/v1/rooms/${encodeURIComponent(roomId)}`)
+}
+
+export function createRoom(body: {
+  name: string
+  description?: string | null
+}): Promise<RoomSummary> {
+  return fetchJson<RoomSummary>('/api/v1/rooms', { method: 'POST', body })
+}
+
+export function updateRoom(
+  roomId: string,
+  body: { name?: string; description?: string | null },
+): Promise<RoomSummary> {
+  return fetchJson<RoomSummary>(`/api/v1/rooms/${encodeURIComponent(roomId)}`, {
+    method: 'PATCH',
+    body,
+  })
+}
+
+export function listSensors(): Promise<SensorsResponse> {
+  return fetchJson<SensorsResponse>('/api/v1/sensors')
+}
+
+export function updateSensorDisplayName(
+  sensorId: string,
+  displayName: string,
+): Promise<SensorSummary> {
+  return fetchJson<SensorSummary>(`/api/v1/sensors/${encodeURIComponent(sensorId)}`, {
+    method: 'PATCH',
+    body: { displayName },
+  })
+}
+
+export function assignSensor(roomId: string, sensorId: string): Promise<SensorSummary> {
+  return fetchJson<SensorSummary>(
+    `/api/v1/rooms/${encodeURIComponent(roomId)}/sensors/${encodeURIComponent(sensorId)}`,
+    { method: 'PUT' },
+  )
+}
+
+export function unassignSensor(roomId: string, sensorId: string): Promise<SensorSummary> {
+  return fetchJson<SensorSummary>(
+    `/api/v1/rooms/${encodeURIComponent(roomId)}/sensors/${encodeURIComponent(sensorId)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export function listEnvironmentReadings(

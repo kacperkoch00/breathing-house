@@ -8,6 +8,10 @@ rule snapshot. Room cards link to `/rooms/:roomId` for latest conditions,
 active alerts for that room, a 24h temperature sparkline, and recent occupancy
 events.
 
+`/setup` manages rooms and sensor assignments against `home-api` write APIs:
+create/update rooms, rename sensors, and assign or unassign sensors to rooms.
+There is no auth and no alert-rule editing on this page.
+
 ```bash
 npm install
 npm run dev

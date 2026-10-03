@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom'
 import { HomeOverview } from './HomeOverview'
 import { RoomDetail } from './RoomDetail'
+import { SetupPage } from './SetupPage'
 
 function NotFound() {
   return (
@@ -24,6 +25,7 @@ function App() {
     <Routes>
       <Route path="/" element={<HomeOverview />} />
       <Route path="/rooms/:roomId" element={<RoomDetail />} />
+      <Route path="/setup" element={<SetupPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   )
