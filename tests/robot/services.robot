@@ -366,7 +366,8 @@ Room Has Reading With Temperature
     ${response}=    GET On Session    home-api    /api/v1/rooms/${room_id}/environment-readings
     Should Be Equal As Integers    ${response.status_code}    200
     ${temps}=    Evaluate    [item['temperature'] for item in $response.json()['items']]
-    List Should Contain Value    ${temps}    ${temperature}
+    ${expected}=    Convert To Number    ${temperature}
+    List Should Contain Value    ${temps}    ${expected}
 
 Room Has Occupancy Event
     [Arguments]    ${room_id}    ${sensor_id}    ${open}
