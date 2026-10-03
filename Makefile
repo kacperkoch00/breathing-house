@@ -1,4 +1,4 @@
-.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-load-service k8s-deploy k8s-deploy-service k8s-observability k8s-grafana k8s-mqtt k8s-kafka
+.PHONY: test test-go test-java test-dashboard generate generate-service helm-lint helm-template helm-package helm-package-all image images build build-all build-changes k8s-start k8s-stop k8s-load k8s-load-service k8s-deploy k8s-deploy-service k8s-observability k8s-grafana k8s-mqtt k8s-kafka k8s-postgres
 
 SERVICE ?= environment-monitor
 SERVICE_DIR := svc/$(SERVICE)
@@ -142,7 +142,7 @@ k8s-load-service:
 		exit 1; \
 	fi
 
-k8s-deploy: k8s-start k8s-mqtt k8s-kafka
+k8s-deploy: k8s-start k8s-mqtt k8s-kafka k8s-postgres
 	@if test "$(SERVICE)" = "all"; then \
 		for service in $(SERVICES); do \
 			echo "==> deploying $$service"; \
@@ -193,6 +193,16 @@ k8s-kafka: k8s-start
 		--create \
 		--if-not-exists \
 		--topic sensor-data-dlq
+
+k8s-postgres: k8s-start
+	kubectl apply -f deploy/k8s/postgres.yaml
+	kubectl rollout status deployment/postgres --timeout=180s
+	kubectl exec deployment/postgres -- \
+		psql -U bh -d breathing_house -c \
+		"SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname IN ('environment','occupancy') ORDER BY 1;"
+	kubectl exec deployment/postgres -- \
+		psql -U bh -d breathing_house -c \
+		"SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('environment','occupancy') ORDER BY 1, 2;"
 
 k8s-observability: k8s-start
 	@kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -

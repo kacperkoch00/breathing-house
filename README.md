@@ -12,6 +12,7 @@ svc/                         Service source code
   home-dashboard/            Static Vite/React start page
   sensors-data-collector/    MQTT → Kafka collector
 deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
+deploy/k8s/                  Plain Kubernetes manifests (Kafka, Postgres)
 deploy/observability/        Loki, Alloy, Prometheus, and Grafana Helm values
 tests/robot/                 Robot Framework night-regression suite
 scripts/                     Desktop Minikube setup using GHCR images
@@ -20,7 +21,9 @@ Makefile                     Repository-wide build and deployment commands
 docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
 ```
 
-Kafka for local Kubernetes is installed by `make k8s-kafka` from `deploy/k8s/kafka.yaml`, not a Helm chart. MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
+Kafka for local Kubernetes is installed by `make k8s-kafka` from `deploy/k8s/kafka.yaml`, not a Helm chart. Postgres is installed by `make k8s-postgres` from `deploy/k8s/postgres.yaml` (also not a Helm chart). MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
+
+Local Postgres (Minikube only): ClusterIP service `postgres:5432`, database `breathing_house`, user/password `bh`/`bh` (dev defaults in the Secret). First boot creates schemas `environment` and `occupancy` with append-only history tables; monitor app wiring comes later.
 
 ## Services
 
@@ -57,7 +60,7 @@ make build-all
 ```
 
 Load each local image into Minikube and install each chart with Ingress enabled.
-`make k8s-deploy` also starts MQTT and Kafka (`k8s-start` + `k8s-mqtt` + `k8s-kafka`):
+`make k8s-deploy` also starts MQTT, Kafka, and Postgres (`k8s-start` + `k8s-mqtt` + `k8s-kafka` + `k8s-postgres`):
 
 ```bash
 for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
@@ -182,7 +185,7 @@ kubectl run -it --rm --restart=Never mqtt-debug --image=busybox:1.36 -- \
 What it does:
 
 - Starts Minikube and enables Ingress
-- Ensures host Mosquitto when `MQTT_MODE=external` (default), or installs in-cluster MQTT (`make k8s-mqtt`) when `MQTT_MODE=in-cluster`; always installs Kafka (`make k8s-kafka`)
+- Ensures host Mosquitto when `MQTT_MODE=external` (default), or installs in-cluster MQTT (`make k8s-mqtt`) when `MQTT_MODE=in-cluster`; always installs Kafka (`make k8s-kafka`) and Postgres (`make k8s-postgres`)
 - Deploys all five services from `ghcr.io/$OWNER/<service>:$IMAGE_TAG` with `*.local` Ingress hosts
 - Optionally updates `/etc/hosts` with the Minikube IP and the five hostnames
 - Curls backend `/live` and dashboard `/` through Ingress, then prints URLs
@@ -271,6 +274,7 @@ make k8s-start
 make k8s-stop
 make k8s-mqtt
 make k8s-kafka
+make k8s-postgres
 make k8s-load SERVICE=environment-monitor
 make k8s-deploy SERVICE=environment-monitor
 make k8s-observability
@@ -279,7 +283,7 @@ make k8s-grafana
 
 `make build SERVICE=<service>` builds one service, including its tests, OpenAPI generation where applicable, Helm lint, Helm packaging, and container image. `make build-all` runs the complete repository build and packages every chart. `make build-changes` builds and packages only services affected by the current Git changes; use `DIFF_BASE=<git-ref>` to choose the comparison base.
 
-`make k8s-deploy` depends on `k8s-start`, `k8s-mqtt`, and `k8s-kafka`.
+`make k8s-deploy` depends on `k8s-start`, `k8s-mqtt`, `k8s-kafka`, and `k8s-postgres`.
 
 `make k8s-observability` / `make k8s-grafana` installs Loki, Alloy, Prometheus, and Grafana (Prometheus + Loki datasources plus Breathing House dashboards). `WITH_OBSERVABILITY=1` on the desktop setup script gets the same stack.
 
@@ -382,6 +386,7 @@ make build SERVICE=environment-monitor
 make k8s-load SERVICE=environment-monitor
 make k8s-mqtt
 make k8s-kafka
+make k8s-postgres
 make k8s-observability
 make k8s-deploy SERVICE=environment-monitor
 ```
