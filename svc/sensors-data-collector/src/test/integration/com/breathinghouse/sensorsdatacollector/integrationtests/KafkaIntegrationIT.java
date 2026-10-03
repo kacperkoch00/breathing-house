@@ -96,8 +96,10 @@ class KafkaIntegrationIT {
         assertThat(message.has("roomId")).isFalse();
         assertThat(message.has("deviceId")).isFalse();
         assertThat(message.get("type").asText()).isEqualTo(sensorType);
-        assertThat(message.get("observedAt")).isNotNull();
-        assertThat(message.get("receivedAt")).isNotNull();
+        assertThat(message.get("observedAt").isTextual()).isTrue();
+        assertThat(message.get("receivedAt").isTextual()).isTrue();
+        assertThat(message.get("observedAt").asText()).endsWith("Z");
+        assertThat(message.get("receivedAt").asText()).endsWith("Z");
         assertThat(message.get("values")).isNotNull();
         assertThat(message.get("values").has("sensorId")).isFalse();
         assertThat(message.get("values").has("timestamp")).isFalse();
@@ -120,8 +122,10 @@ class KafkaIntegrationIT {
         assertThat(message.get("roomId").asText()).isEqualTo("gateway");
         assertThat(message.has("sensorId")).isFalse();
         assertThat(message.get("type").asText()).isEqualTo("STATUS");
-        assertThat(message.get("observedAt")).isNotNull();
-        assertThat(message.get("receivedAt")).isNotNull();
+        assertThat(message.get("observedAt").isTextual()).isTrue();
+        assertThat(message.get("receivedAt").isTextual()).isTrue();
+        assertThat(message.get("observedAt").asText()).endsWith("Z");
+        assertThat(message.get("receivedAt").asText()).endsWith("Z");
         assertThat(message.get("values")).isNotNull();
     }
 

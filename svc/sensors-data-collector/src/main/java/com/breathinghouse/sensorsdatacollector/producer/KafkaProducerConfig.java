@@ -1,6 +1,9 @@
 package com.breathinghouse.sensorsdatacollector.producer;
 
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -21,24 +24,11 @@ public class KafkaProducerConfig {
 
     @Bean
     public ProducerFactory<String, SensorData> producerFactory(KafkaProperties kafkaProperties) {
-        Map<String, Object> properties = new HashMap<>();
-
-        properties.put(
-                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                kafkaProperties.getBootstrapServers()
+        return new DefaultKafkaProducerFactory<>(
+                producerConfigs(kafkaProperties),
+                new StringSerializer(),
+                kafkaJsonSerializer()
         );
-        properties.put(
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                StringSerializer.class
-        );
-        properties.put(
-                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                JsonSerializer.class
-        );
-        properties.put(ProducerConfig.ACKS_CONFIG, "all");
-        properties.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-
-        return new DefaultKafkaProducerFactory<>(properties);
     }
 
     @Bean
@@ -52,24 +42,11 @@ public class KafkaProducerConfig {
     public ProducerFactory<String, PoisonMessage> poisonMessageProducerFactory(
             KafkaProperties kafkaProperties
     ) {
-        Map<String, Object> properties = new HashMap<>();
-
-        properties.put(
-                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                kafkaProperties.getBootstrapServers()
+        return new DefaultKafkaProducerFactory<>(
+                producerConfigs(kafkaProperties),
+                new StringSerializer(),
+                kafkaJsonSerializer()
         );
-        properties.put(
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                StringSerializer.class
-        );
-        properties.put(
-                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                JsonSerializer.class
-        );
-        properties.put(ProducerConfig.ACKS_CONFIG, "all");
-        properties.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-
-        return new DefaultKafkaProducerFactory<>(properties);
     }
 
     @Bean
@@ -87,5 +64,29 @@ public class KafkaProducerConfig {
                 kafkaProperties.getBootstrapServers()
         );
         return AdminClient.create(properties);
+    }
+
+    static ObjectMapper kafkaObjectMapper() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        return objectMapper;
+    }
+
+    static <T> JsonSerializer<T> kafkaJsonSerializer() {
+        JsonSerializer<T> serializer = new JsonSerializer<>(kafkaObjectMapper());
+        serializer.setAddTypeInfo(false);
+        return serializer;
+    }
+
+    private static Map<String, Object> producerConfigs(KafkaProperties kafkaProperties) {
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                kafkaProperties.getBootstrapServers()
+        );
+        properties.put(ProducerConfig.ACKS_CONFIG, "all");
+        properties.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        return properties;
     }
 }
