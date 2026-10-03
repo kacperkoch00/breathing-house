@@ -65,7 +65,7 @@ Sensor data is transferred from MQTT to Kafka
     ...    -t
     ...    home/e2e-test/air
     ...    -m
-    ...    {"temperature":22.5}
+    ...    {"temperature":22.5, "humidity": 89, "co2": 1000}
 
     Should Be Equal As Integers    ${result.rc}    0
 
@@ -75,3 +75,5 @@ Sensor data is transferred from MQTT to Kafka
     Should Contain    ${kafka_message}    "roomId":"e2e-test"
     Should Contain    ${kafka_message}    "type":"AIR"
     Should Contain    ${kafka_message}    "temperature":22.5
+    Should Contain    ${kafka_message}    "humidity":89
+    Should Contain    ${kafka_message}    "co2":1000
