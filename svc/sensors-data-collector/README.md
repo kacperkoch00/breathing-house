@@ -221,8 +221,8 @@ use schema version `2` (`SensorData`):
 | `schemaVersion` | `int`             | `2` (`SensorData.SCHEMA_VERSION`)                                           |
 | `sensorId`      | `string`          | Trimmed, non-blank `sensorId` from the MQTT payload (max 200 characters)    |
 | `type`          | `SensorType`      | `ROOM`, `AIR`, `OPENING`, or `PRESENCE`                                     |
-| `observedAt`    | `Instant`         | From payload `timestamp` when parseable; otherwise set at transform time    |
-| `receivedAt`    | `Instant`         | Always set to transform time (`Instant.now()`)                              |
+| `observedAt`    | RFC3339 string    | From payload `timestamp` when parseable; otherwise set at transform time (`Instant` in Java) |
+| `receivedAt`    | RFC3339 string    | Always set to transform time (`Instant.now()` in Java)                      |
 | `values`        | `object`          | Sensor-specific fields, without `sensorId`, `timestamp`, or envelope fields |
 
 Schema-v2 envelopes have no `roomId` or `deviceId`; `values` never contains
@@ -231,7 +231,9 @@ Schema-v2 envelopes have no `roomId` or `deviceId`; `values` never contains
 `STATUS` messages (on `status-data`) stay on schema version `1`
 (`SensorData.STATUS_SCHEMA_VERSION`) with `roomId` (`gateway`, from the topic) and
 optional `deviceId` from the payload, and no `sensorId`. Null fields are omitted
-from the JSON.
+from the JSON. Kafka `Instant` fields (`observedAt`, `receivedAt`, and DLQ
+`rejectedAt`) are serialized as RFC3339 strings (ISO-8601 with `Z`), not epoch
+numbers.
 
 Payload `timestamp` parsing: ISO-8601 strings via `Instant.parse`; numbers greater
 than `1e12` as epoch millis, otherwise epoch seconds. Unparseable values fall back
