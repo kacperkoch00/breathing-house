@@ -14,6 +14,7 @@ import (
 	"occupancy-monitor/internal/handler"
 	"occupancy-monitor/internal/kafka/consumer"
 	"occupancy-monitor/internal/metrics"
+	"occupancy-monitor/internal/storage"
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,6 +32,9 @@ type Config struct {
 	KafkaConsumerTopic   string        `envconfig:"KAFKA_CONSUMER_TOPIC" default:"event-data"`
 	KafkaConsumerGroupID string        `envconfig:"KAFKA_CONSUMER_GROUP_ID" default:"occupancy-monitor"`
 	KafkaRetryDelay      time.Duration `envconfig:"KAFKA_RETRY_DELAY" default:"5s"`
+	DatabaseURL          string        `envconfig:"DATABASE_URL" default:"postgres://bh:bh@localhost:5432/breathing_house?sslmode=disable"`
+	DatabaseTimeout      time.Duration `envconfig:"DATABASE_TIMEOUT" default:"2s"`
+	DatabaseRetryDelay   time.Duration `envconfig:"DATABASE_RETRY_DELAY" default:"5s"`
 }
 
 func main() {
@@ -47,6 +51,12 @@ func run() error {
 	}
 	defer func() { _ = logger.Sync() }()
 
+	dbPool, err := initializeDatabase(config)
+	if err != nil {
+		return err
+	}
+	defer dbPool.Close()
+
 	kafkaConsumer, err := initializeKafkaConsumer(config, logger)
 	if err != nil {
 		return err
@@ -61,14 +71,32 @@ func run() error {
 	signalCtx, stopSignals := createSignalContext()
 	defer stopSignals()
 
-	startConsuming(signalCtx, kafkaConsumer, logger, config.KafkaRetryDelay, readiness, kafkaMetrics)
+	startConsuming(signalCtx, kafkaConsumer, dbPool, logger, config, readiness, kafkaMetrics)
 
 	return waitForShutdown(signalCtx, serverErrors, server, config, logger)
 }
 
-func startConsuming(ctx context.Context, kafkaConsumer *kgo.Client, logger *zap.Logger, retryDelay time.Duration, readiness *handler.Readiness, kafkaMetrics *metrics.Kafka) {
-	go consumer.CheckReadiness(ctx, kafkaConsumer, logger, retryDelay, readiness)
-	go consumer.PollEvents(ctx, kafkaConsumer, logger, retryDelay, kafkaMetrics)
+func startConsuming(
+	ctx context.Context,
+	kafkaConsumer *kgo.Client,
+	dbPool *storage.Pool,
+	logger *zap.Logger,
+	config Config,
+	readiness *handler.Readiness,
+	kafkaMetrics *metrics.Kafka,
+) {
+	go consumer.CheckReadiness(ctx, kafkaConsumer, logger, config.KafkaRetryDelay, readiness)
+	go storage.CheckReadiness(ctx, dbPool, logger, config.DatabaseTimeout, config.DatabaseRetryDelay, readiness)
+	go consumer.PollEvents(
+		ctx,
+		kafkaConsumer,
+		logger,
+		config.KafkaRetryDelay,
+		config.DatabaseTimeout,
+		kafkaMetrics,
+		dbPool,
+		readiness,
+	)
 }
 
 func initialize() (Config, *zap.Logger, error) {
@@ -83,6 +111,15 @@ func initialize() (Config, *zap.Logger, error) {
 	}
 
 	return config, logger, nil
+}
+
+func initializeDatabase(config Config) (*storage.Pool, error) {
+	pool, err := storage.NewPool(context.Background(), config.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("initialize database pool: %w", err)
+	}
+
+	return pool, nil
 }
 
 func initializeKafkaConsumer(config Config, logger *zap.Logger) (*kgo.Client, error) {

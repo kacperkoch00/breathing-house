@@ -1,9 +1,10 @@
 # Occupancy Monitor
 
 Go HTTP service that consumes Kafka topic `event-data` (consumer group
-`occupancy-monitor`). It polls and logs records today; domain/business logic is
-still thin. `/live` is always up when the process is running. `/ready` requires
-a successful Kafka ping.
+`occupancy-monitor`). Valid `PRESENCE` and `OPENING` events are persisted to
+PostgreSQL table `occupancy.occupancy_event`. Offsets are committed only after a
+successful insert (or idempotent conflict ignore). `/live` is always up when the
+process is running. `/ready` requires Kafka and database connectivity.
 
 ## Local development
 
@@ -13,6 +14,10 @@ go run ./cmd/server
 curl http://localhost:8081/live
 curl http://localhost:8081/ready
 ```
+
+Defaults expect Kafka at `localhost:9092` and Postgres at
+`postgres://bh:bh@localhost:5432/breathing_house?sslmode=disable` (see
+`deploy/k8s/postgres.yaml` / `make k8s-postgres`).
 
 The service listens on port `8081` by default.
 
@@ -46,19 +51,13 @@ curl http://localhost:8081/metrics
 | `KAFKA_CONSUMER_TOPIC` | `event-data` | Topic to consume |
 | `KAFKA_CONSUMER_GROUP_ID` | `occupancy-monitor` | Consumer group |
 | `KAFKA_RETRY_DELAY` | `5s` | Delay between Kafka readiness/poll retries |
+| `DATABASE_URL` | `postgres://bh:bh@localhost:5432/breathing_house?sslmode=disable` | Postgres DSN (not logged) |
+| `DATABASE_TIMEOUT` | `2s` | Timeout for ping and insert |
+| `DATABASE_RETRY_DELAY` | `5s` | Delay between database readiness retries |
 
-The Helm chart under `deploy/helm/occupancy-monitor` currently sets only
-`HTTP_PORT`, `SHUTDOWN_TIMEOUT`, and `LOG_LEVEL`. For local Kubernetes, set the
-Kafka variables the binary expects via a values override or `--set`, for
-example:
-
-```bash
-helm upgrade --install occupancy-monitor deploy/helm/occupancy-monitor \
-  --set env.KAFKA_BROKERS=kafka:9092 \
-  --set env.KAFKA_CONSUMER_TOPIC=event-data \
-  --set env.KAFKA_CONSUMER_GROUP_ID=occupancy-monitor \
-  --set env.KAFKA_RETRY_DELAY=5s
-```
+The Helm chart under `deploy/helm/occupancy-monitor` sets these for cluster
+deployments (`KAFKA_BROKERS=kafka:9092`,
+`DATABASE_URL=postgres://bh:bh@postgres:5432/breathing_house?sslmode=disable`).
 
 ## Container image
 
