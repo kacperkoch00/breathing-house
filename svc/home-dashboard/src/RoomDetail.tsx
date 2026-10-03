@@ -134,9 +134,14 @@ export function RoomDetail() {
           <span className="brand-mark" aria-hidden="true">BH</span>
           <span>Breathing House</span>
         </Link>
-        <Link className="back-link" to="/">
-          ← All rooms
-        </Link>
+        <div className="topbar-meta">
+          <Link className="nav-link" to="/setup">
+            Setup
+          </Link>
+          <Link className="back-link" to="/">
+            ← All rooms
+          </Link>
+        </div>
       </nav>
 
       {state.loadState === 'loading' && (

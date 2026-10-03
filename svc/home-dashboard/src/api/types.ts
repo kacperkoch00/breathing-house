@@ -18,6 +18,17 @@ export interface RoomsResponse {
   rooms: RoomSummary[]
 }
 
+export interface SensorSummary {
+  sensorId: string
+  displayName: string
+  types: string[]
+  roomId: string | null
+}
+
+export interface SensorsResponse {
+  sensors: SensorSummary[]
+}
+
 export interface EnvironmentReading {
   id: number
   roomId: string
