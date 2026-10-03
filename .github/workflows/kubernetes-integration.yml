@@ -229,6 +229,11 @@ jobs:
             --if-not-exists \
             --topic sensor-data
 
+      - name: Install Postgres in Kind
+        run: |
+          kubectl apply -f deploy/k8s/postgres.yaml
+          kubectl rollout status deployment/postgres --timeout=180s
+
       - name: Build service image for pull request
         if: ${{ !inputs.publish-oci }}
         run: docker build -t ${{ inputs.service }}:ci svc/${{ inputs.service }}

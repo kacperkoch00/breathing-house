@@ -1,9 +1,10 @@
 # Environment Monitor
 
 Go HTTP service that consumes Kafka topic `sensor-data` (consumer group
-`environment-monitor`). It polls and logs records today; domain/business logic
-is still thin. `/live` is always up when the process is running. `/ready`
-requires a successful Kafka ping.
+`environment-monitor`). Valid `ROOM` and `AIR` records are persisted to
+PostgreSQL table `environment.environment_reading`. Offsets are committed only
+after a successful insert (or idempotent conflict ignore). `/live` is always up
+when the process is running. `/ready` requires Kafka and database connectivity.
 
 ## Local development
 
@@ -11,6 +12,10 @@ requires a successful Kafka ping.
 go test ./...
 go run ./cmd/server
 ```
+
+Defaults expect Kafka at `localhost:9092` and Postgres at
+`postgres://bh:bh@localhost:5432/breathing_house?sslmode=disable` (see
+`deploy/k8s/postgres.yaml` / `make k8s-postgres`).
 
 The service listens on port `8080` by default. Check its health:
 
@@ -49,9 +54,13 @@ curl http://localhost:8080/metrics
 | `KAFKA_CONSUMER_TOPIC` | `sensor-data` | Topic to consume |
 | `KAFKA_CONSUMER_GROUP_ID` | `environment-monitor` | Consumer group |
 | `KAFKA_RETRY_DELAY` | `5s` | Delay between Kafka readiness/poll retries |
+| `DATABASE_URL` | `postgres://bh:bh@localhost:5432/breathing_house?sslmode=disable` | Postgres DSN (not logged) |
+| `DATABASE_TIMEOUT` | `2s` | Timeout for ping and insert |
+| `DATABASE_RETRY_DELAY` | `5s` | Delay between database readiness retries |
 
 The Helm chart under `deploy/helm/environment-monitor` sets these for cluster
-deployments (`KAFKA_BROKERS=kafka:9092`).
+deployments (`KAFKA_BROKERS=kafka:9092`,
+`DATABASE_URL=postgres://bh:bh@postgres:5432/breathing_house?sslmode=disable`).
 
 ## Container image
 
