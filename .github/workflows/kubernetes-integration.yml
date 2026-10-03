@@ -229,6 +229,13 @@ jobs:
             --if-not-exists \
             --topic sensor-data
 
+          kubectl exec deployment/kafka -- \
+            /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --create \
+            --if-not-exists \
+            --topic status-data
+
       - name: Install Postgres in Kind
         run: |
           kubectl apply -f deploy/k8s/postgres.yaml

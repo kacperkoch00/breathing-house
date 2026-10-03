@@ -3,10 +3,11 @@ info:
   title: Home API
   version: 1.0.0
   description: >
-    Frontend-facing Breathing House API for room history and alerts.
-    This revision exposes read-only room discovery and paginated environment
-    and occupancy history, and evaluates configurable alert rules internally.
-    Alert APIs are not implemented yet.
+    Frontend-facing Breathing House API for room history, alerts, and sensor
+    gateway availability. This revision exposes read-only room discovery and
+    paginated environment and occupancy history, evaluates configurable alert
+    rules internally, and reports whether the sensor gateway is online from
+    Kafka STATUS heartbeats. Alert APIs are not implemented yet.
 
 paths:
   /live:
@@ -24,22 +25,53 @@ paths:
   /ready:
     get:
       operationId: getReady
-      summary: Check whether PostgreSQL history tables are readable
+      summary: Check whether PostgreSQL history and home_api tables are readable
+      description: >
+        Returns ready when environment, occupancy, alert, and gateway_heartbeat
+        tables are queryable. Gateway online/offline state is not part of readiness.
       responses:
         '200':
-          description: Both history tables are queryable
+          description: Required database tables are queryable
           content:
             text/plain:
               schema:
                 type: string
                 example: READY
         '503':
-          description: Database or history tables are unavailable
+          description: Database or required tables are unavailable
           content:
             text/plain:
               schema:
                 type: string
                 example: NOT_READY
+  /api/v1/sensor-gateway/status:
+    get:
+      operationId: getSensorGatewayStatus
+      summary: Report whether the sensor gateway is currently online
+      description: >
+        Online means a valid STATUS heartbeat for the configured gateway ID was
+        received within SENSOR_GATEWAY_HEARTBEAT_TIMEOUT, using receivedAt.
+        Missing or expired heartbeats return online=false with HTTP 200.
+      responses:
+        '200':
+          description: Gateway availability domain state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayStatusResponse'
+              examples:
+                online:
+                  value:
+                    online: true
+                offline:
+                  value:
+                    online: false
+        '500':
+          description: Database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
   /api/v1/rooms:
     get:
       operationId: listRooms
@@ -284,6 +316,15 @@ components:
           type: integer
         hasMore:
           type: boolean
+    GatewayStatusResponse:
+      type: object
+      required: [online]
+      properties:
+        online:
+          type: boolean
+          description: >
+            True when the newest STATUS heartbeat for SENSOR_GATEWAY_ID has
+            receivedAt within the configured timeout; otherwise false.
     ApiError:
       type: object
       required: [error, message]

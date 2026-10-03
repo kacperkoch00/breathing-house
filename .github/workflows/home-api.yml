@@ -53,6 +53,43 @@ jobs:
       - name: Test and package
         working-directory: svc/home-api
         run: mvn -B test package
+      - name: Start Kafka
+        run: |
+          docker run -d \
+            --name kafka \
+            -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:4.1.0
+
+          for attempt in $(seq 1 30); do
+            if docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:9092 \
+              --list >/dev/null 2>&1; then
+              echo "Kafka is ready"
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs kafka
+              exit 1
+            fi
+            sleep 2
+          done
+      - name: Create Kafka status-data topic
+        run: |
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:9092 \
+            --create \
+            --if-not-exists \
+            --topic status-data
       - name: Initialize schema and load fixtures
         env:
           PGPASSWORD: bh
@@ -96,6 +133,12 @@ jobs:
           DATABASE_PASSWORD: bh
           PGPASSWORD: bh
           ALERT_CONFIG_PATH: /tmp/home-api-alerts.json
+          KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
+          KAFKA_STATUS_TOPIC: status-data
+          KAFKA_STATUS_CONSUMER_GROUP_ID: home-api-gateway-status-ci
+          SENSOR_GATEWAY_ID: gateway
+          SENSOR_GATEWAY_HEARTBEAT_TIMEOUT: 5s
+          KAFKA_RETRY_DELAY: 1s
         run: |
           set -euo pipefail
           cat >/tmp/home-api-alerts.json <<'JSON'
@@ -144,6 +187,8 @@ jobs:
               cat /tmp/home-api.log || true
               echo '---- postgres log ----'
               docker logs "${{ job.services.postgres.id }}" 2>/dev/null || true
+              echo '---- kafka log ----'
+              docker logs kafka 2>/dev/null || true
             fi
             kill "$pid" 2>/dev/null || true
           }
@@ -207,6 +252,47 @@ jobs:
           psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
             "SELECT trigger_value FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
             | grep -q '{"co2":"700","temperature":"22.5"}'
+
+          gateway_status="$(curl --fail --silent http://127.0.0.1:18082/api/v1/sensor-gateway/status)"
+          echo "$gateway_status" | jq -e '.online == false'
+
+          observed_at="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)"
+          received_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat <<EOF | docker exec -i kafka /opt/kafka/bin/kafka-console-producer.sh \
+            --bootstrap-server localhost:9092 \
+            --topic status-data
+          {"schemaVersion":1,"roomId":"gateway","deviceId":null,"type":"STATUS","observedAt":"${observed_at}","receivedAt":"${received_at}","values":{"status":"ONLINE","uptime":3600,"connected":true,"ci":true}}
+          EOF
+
+          for attempt in $(seq 1 30); do
+            gateway_status="$(curl --fail --silent http://127.0.0.1:18082/api/v1/sensor-gateway/status)"
+            if echo "$gateway_status" | jq -e '.online == true' >/dev/null; then
+              break
+            fi
+            if test "$attempt" -eq 30; then
+              echo "gateway status did not become online after STATUS publish"
+              echo "$gateway_status"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+            "SELECT count(*) FROM home_api.gateway_heartbeat WHERE gateway_id = 'gateway'" \
+            | grep -q '1'
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -v ON_ERROR_STOP=1 -Atc \
+            "SELECT kafka_topic || '|' || kafka_partition || '|' || reported_status || '|' || (payload->>'ci')
+             FROM home_api.gateway_heartbeat
+             WHERE gateway_id = 'gateway'
+             ORDER BY id DESC
+             LIMIT 1" \
+            | grep -q '^status-data|0|ONLINE|true$'
+
+          sleep 6
+
+          gateway_status="$(curl --fail --silent http://127.0.0.1:18082/api/v1/sensor-gateway/status)"
+          echo "$gateway_status" | jq -e '.online == false'
       - name: Helm lint
         run: helm lint deploy/helm/home-api
       - name: Package Helm chart

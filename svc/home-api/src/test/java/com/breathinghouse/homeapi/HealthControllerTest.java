@@ -1,6 +1,7 @@
 package com.breathinghouse.homeapi;
 
 import com.breathinghouse.homeapi.alerts.AlertRepository;
+import com.breathinghouse.homeapi.gateway.GatewayHeartbeatRepository;
 import com.breathinghouse.homeapi.history.HistoryRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,9 @@ class HealthControllerTest {
     @MockitoBean
     private AlertRepository alertRepository;
 
+    @MockitoBean
+    private GatewayHeartbeatRepository gatewayHeartbeatRepository;
+
     @Test
     void getLiveReturnsOkEvenWhenDatabaseUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(false);
@@ -38,6 +42,7 @@ class HealthControllerTest {
     void getReadyReturnsReadyWhenTablesQueryable() throws Exception {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(true);
+        when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isOk())
@@ -57,9 +62,32 @@ class HealthControllerTest {
     void getReadyReturns503WhenAlertTablesUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(false);
+        when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().string("NOT_READY\n"));
+    }
+
+    @Test
+    void getReadyReturns503WhenGatewayHeartbeatTableUnavailable() throws Exception {
+        when(historyRepository.isReady()).thenReturn(true);
+        when(alertRepository.isReady()).thenReturn(true);
+        when(gatewayHeartbeatRepository.isReady()).thenReturn(false);
+
+        mockMvc.perform(get("/ready"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string("NOT_READY\n"));
+    }
+
+    @Test
+    void getReadyDoesNotDependOnGatewayOnlineState() throws Exception {
+        when(historyRepository.isReady()).thenReturn(true);
+        when(alertRepository.isReady()).thenReturn(true);
+        when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
+
+        mockMvc.perform(get("/ready"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("READY\n"));
     }
 }
