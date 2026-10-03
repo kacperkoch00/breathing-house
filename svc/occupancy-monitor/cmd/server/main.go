@@ -93,6 +93,7 @@ func startConsuming(
 		logger,
 		config.KafkaRetryDelay,
 		config.DatabaseTimeout,
+		config.DatabaseRetryDelay,
 		kafkaMetrics,
 		dbPool,
 		readiness,
