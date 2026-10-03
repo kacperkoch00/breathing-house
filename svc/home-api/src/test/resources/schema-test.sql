@@ -80,3 +80,13 @@ CREATE TABLE IF NOT EXISTS home_api.gateway_heartbeat (
 
 CREATE INDEX IF NOT EXISTS gateway_heartbeat_gateway_received_idx
   ON home_api.gateway_heartbeat (gateway_id, received_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS home_api.room_metadata (
+  room_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT room_metadata_display_name_nonblank_chk
+    CHECK (length(trim(display_name)) > 0),
+  CONSTRAINT room_metadata_display_name_length_chk
+    CHECK (length(display_name) <= 100)
+);

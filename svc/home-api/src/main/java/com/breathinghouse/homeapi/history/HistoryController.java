@@ -25,11 +25,6 @@ public class HistoryController {
         this.historyRepository = historyRepository;
     }
 
-    @GetMapping("/rooms")
-    public RoomsResponse listRooms() {
-        return new RoomsResponse(historyRepository.listRooms());
-    }
-
     @GetMapping("/rooms/{roomId}/environment-readings")
     public PageResponse<EnvironmentReading> environmentReadings(
             @PathVariable @NotBlank String roomId,

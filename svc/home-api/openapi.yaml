@@ -27,8 +27,9 @@ paths:
       operationId: getReady
       summary: Check whether PostgreSQL history and home_api tables are readable
       description: >
-        Returns ready when environment, occupancy, alert, and gateway_heartbeat
-        tables are queryable. Gateway online/offline state is not part of readiness.
+        Returns ready when environment, occupancy, alert, gateway_heartbeat, and
+        room_metadata tables are queryable. Gateway online/offline state is not
+        part of readiness.
       responses:
         '200':
           description: Required database tables are queryable
@@ -75,14 +76,61 @@ paths:
   /api/v1/rooms:
     get:
       operationId: listRooms
-      summary: List distinct room IDs from environment and occupancy history
+      summary: List discovered rooms with stable roomId and displayName
+      description: >
+        Discovers rooms from environment and occupancy history. roomId is the
+        immutable technical identifier. displayName defaults to roomId until a
+        rename overrides it. Orphaned metadata rows are ignored.
       responses:
         '200':
-          description: Sorted distinct room IDs
+          description: Sorted discovered rooms
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RoomsResponse'
+        '500':
+          description: Database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /api/v1/rooms/{roomId}:
+    patch:
+      operationId: updateRoom
+      summary: Rename a discovered room's displayName
+      description: >
+        Updates presentation metadata only. roomId remains stable for history,
+        alerts, and Kafka. Unknown roomIds that have never appeared in history
+        cannot be created through this endpoint.
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoomRequest'
+            example:
+              displayName: Living Room
+      responses:
+        '200':
+          description: Updated room summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomSummary'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Room has never appeared in history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           description: Database failure
           content:
@@ -201,6 +249,28 @@ components:
     EventType:
       type: string
       enum: [PRESENCE, OPENING]
+    RoomSummary:
+      type: object
+      required: [roomId, displayName]
+      properties:
+        roomId:
+          type: string
+          description: Immutable technical room identifier
+          minLength: 1
+        displayName:
+          type: string
+          description: Mutable presentation name; defaults to roomId when unset
+          minLength: 1
+          maxLength: 100
+    UpdateRoomRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+          description: Friendly room name; trimmed before persistence
+          minLength: 1
+          maxLength: 100
     RoomsResponse:
       type: object
       required: [rooms]
@@ -208,7 +278,7 @@ components:
         rooms:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/RoomSummary'
     EnvironmentReading:
       type: object
       required:

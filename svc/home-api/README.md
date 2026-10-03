@@ -100,13 +100,39 @@ deliveries are idempotent. Invalid STATUS contracts are logged and skipped;
 database failures retry the same record after `KAFKA_RETRY_DELAY` without
 advancing the offset.
 
+## Rooms and display names
+
+`roomId` is the immutable technical identifier used by history endpoints, alert
+rules, persisted alerts, and Kafka messages. `displayName` is mutable
+presentation metadata. Until a room is renamed, `displayName` equals `roomId`
+without creating a metadata row (`COALESCE(metadata.display_name, room_id)`).
+
+```bash
+# Discovered rooms (ordered by roomId)
+curl http://localhost:8082/api/v1/rooms
+# {"rooms":[{"roomId":"bedroom","displayName":"bedroom"},{"roomId":"living-room","displayName":"Living Room"}]}
+
+# Rename a discovered room
+curl -X PATCH http://localhost:8082/api/v1/rooms/living-room \
+  -H 'Content-Type: application/json' \
+  -d '{"displayName":"Living Room"}'
+```
+
+Rename validation:
+
+- `displayName` must be a JSON string
+- leading/trailing whitespace is trimmed
+- blank names and names longer than 100 characters are rejected (`400`)
+- unknown `roomId` values that have never appeared in history return `404`
+- duplicate display names are allowed; Unicode names are allowed
+
+Renaming does not rewrite history rows, alert records, or alert-rule room
+filters. Those continue to use stable `roomId` values.
+
 ## History API
 
 ```bash
-# Distinct room IDs from both history tables
-curl http://localhost:8082/api/v1/rooms
-
-# Environment history (newest first)
+# Environment history (newest first); path uses stable roomId
 curl 'http://localhost:8082/api/v1/rooms/living-room/environment-readings?sensorType=AIR&limit=100&offset=0'
 
 # Occupancy history (newest first)
@@ -120,8 +146,8 @@ Optional filters:
 - both: `limit` (1–500, default 100), `offset` (>= 0, default 0)
 
 Pagination uses `limit + 1` internally and returns `hasMore`. Responses never
-include Kafka topic/partition/offset fields. CORS is enabled for `/api/**`
-against the configured origin allowlist.
+include Kafka topic/partition/offset fields or display names. CORS is enabled
+for `/api/**` (`GET`, `PATCH`, `OPTIONS`) against the configured origin allowlist.
 
 ## Alert evaluation
 
@@ -248,8 +274,9 @@ not implemented yet.
 
 - `/live` is always `200` while the process is running
 - `/ready` is `200` only when `environment.environment_reading`,
-  `occupancy.occupancy_event`, `home_api.alert`, `home_api.alert_state`, and
-  `home_api.gateway_heartbeat` are queryable; otherwise `503`
+  `occupancy.occupancy_event`, `home_api.alert`, `home_api.alert_state`,
+  `home_api.gateway_heartbeat`, and `home_api.room_metadata` are queryable;
+  otherwise `503`
 - `/ready` does **not** require a recent heartbeat or an online gateway. Gateway
   downtime is exposed only by `GET /api/v1/sensor-gateway/status`, not by
   `/live` or `/ready`.

@@ -202,8 +202,32 @@ jobs:
 
           rooms="$(curl --fail --silent http://127.0.0.1:18082/api/v1/rooms)"
           echo "$rooms" | jq -e '
-            (.rooms | sort) == ["bedroom","kitchen","living-room"]
+            ([.rooms[].roomId] | sort) == ["bedroom","kitchen","living-room"] and
+            all(.rooms[]; .displayName == .roomId)
           '
+
+          rename="$(curl --fail --silent -X PATCH \
+            http://127.0.0.1:18082/api/v1/rooms/living-room \
+            -H 'Content-Type: application/json' \
+            -d '{"displayName":"Living Room"}')"
+          echo "$rename" | jq -e '
+            .roomId == "living-room" and .displayName == "Living Room"
+          '
+
+          curl --fail --silent -X PATCH \
+            http://127.0.0.1:18082/api/v1/rooms/living-room \
+            -H 'Content-Type: application/json' \
+            -d '{"displayName":"Living Room"}' >/dev/null
+
+          rooms="$(curl --fail --silent http://127.0.0.1:18082/api/v1/rooms)"
+          echo "$rooms" | jq -e '
+            (.rooms | map(select(.roomId == "living-room")) | .[0].displayName) == "Living Room" and
+            (.rooms | map(select(.roomId == "bedroom")) | .[0].displayName) == "bedroom"
+          '
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+            "SELECT count(*) FROM home_api.room_metadata" \
+            | grep -q '^1$'
 
           env_page="$(curl --fail --silent \
             'http://127.0.0.1:18082/api/v1/rooms/living-room/environment-readings?limit=1&sensorType=AIR')"
@@ -211,6 +235,7 @@ jobs:
             .limit == 1 and
             .offset == 0 and
             .hasMore == false and
+            .items[0].roomId == "living-room" and
             .items[0].sensorType == "AIR" and
             .items[0].co2 == 700.0 and
             .items[0].temperature == null and
@@ -222,6 +247,7 @@ jobs:
           echo "$occ_page" | jq -e '
             .hasMore == true and
             (.items | length) == 1 and
+            .items[0].roomId == "living-room" and
             .items[0].eventType == "PRESENCE" and
             .items[0].present == false and
             .items[0].open == null and

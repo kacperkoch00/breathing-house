@@ -63,18 +63,6 @@ public class HistoryRepository {
         }
     }
 
-    public List<String> listRooms() {
-        String sql = """
-                SELECT room_id FROM (
-                  SELECT room_id FROM environment.environment_reading
-                  UNION
-                  SELECT room_id FROM occupancy.occupancy_event
-                ) rooms
-                ORDER BY room_id
-                """;
-        return jdbc.getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString("room_id"));
-    }
-
     public PageResponse<EnvironmentReading> findEnvironmentReadings(
             String roomId,
             SensorType sensorType,

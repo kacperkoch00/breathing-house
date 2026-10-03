@@ -38,26 +38,6 @@ class HistoryControllerTest {
     private HistoryRepository historyRepository;
 
     @Test
-    void listRoomsReturnsSortedRooms() throws Exception {
-        when(historyRepository.listRooms()).thenReturn(List.of("bedroom", "living-room"));
-
-        mockMvc.perform(get("/api/v1/rooms"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rooms[0]").value("bedroom"))
-                .andExpect(jsonPath("$.rooms[1]").value("living-room"));
-    }
-
-    @Test
-    void listRoomsReturnsEmptyList() throws Exception {
-        when(historyRepository.listRooms()).thenReturn(List.of());
-
-        mockMvc.perform(get("/api/v1/rooms"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rooms").isArray())
-                .andExpect(jsonPath("$.rooms").isEmpty());
-    }
-
-    @Test
     void environmentHistoryReturnsMappedFieldsAndNulls() throws Exception {
         when(historyRepository.findEnvironmentReadings(
                 eq("living-room"), isNull(), isNull(), isNull(), eq(100), eq(0)))
@@ -79,6 +59,7 @@ class HistoryControllerTest {
         mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].id").value(123))
+                .andExpect(jsonPath("$.items[0].roomId").value("living-room"))
                 .andExpect(jsonPath("$.items[0].sensorType").value("AIR"))
                 .andExpect(jsonPath("$.items[0].temperature").value(22.5))
                 .andExpect(jsonPath("$.items[0].light").value(nullValue()))
@@ -106,6 +87,7 @@ class HistoryControllerTest {
 
         mockMvc.perform(get("/api/v1/rooms/living-room/occupancy-events"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].roomId").value("living-room"))
                 .andExpect(jsonPath("$.items[0].present").value(false))
                 .andExpect(jsonPath("$.items[0].open").value(nullValue()))
                 .andExpect(jsonPath("$.items[0].eventType").value("PRESENCE"));
@@ -208,10 +190,11 @@ class HistoryControllerTest {
 
     @Test
     void repositoryFailureReturns500() throws Exception {
-        when(historyRepository.listRooms())
+        when(historyRepository.findEnvironmentReadings(
+                any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenThrow(new DataAccessResourceFailureException("down"));
 
-        mockMvc.perform(get("/api/v1/rooms"))
+        mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("database_error"))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
@@ -219,9 +202,11 @@ class HistoryControllerTest {
 
     @Test
     void corsAllowsConfiguredOrigin() throws Exception {
-        when(historyRepository.listRooms()).thenReturn(List.of());
+        when(historyRepository.findEnvironmentReadings(
+                any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new PageResponse<>(List.of(), 100, 0, false));
 
-        mockMvc.perform(options("/api/v1/rooms")
+        mockMvc.perform(options("/api/v1/rooms/living-room/environment-readings")
                         .header("Origin", "http://localhost:5173")
                         .header("Access-Control-Request-Method", "GET"))
                 .andExpect(status().isOk())
@@ -230,9 +215,7 @@ class HistoryControllerTest {
 
     @Test
     void corsRejectsUnrelatedOrigin() throws Exception {
-        when(historyRepository.listRooms()).thenReturn(List.of());
-
-        mockMvc.perform(get("/api/v1/rooms")
+        mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings")
                         .header("Origin", "http://evil.example"))
                 .andExpect(status().isForbidden())
                 .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));

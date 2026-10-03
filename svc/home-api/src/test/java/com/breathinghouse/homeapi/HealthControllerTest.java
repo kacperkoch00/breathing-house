@@ -3,6 +3,7 @@ package com.breathinghouse.homeapi;
 import com.breathinghouse.homeapi.alerts.AlertRepository;
 import com.breathinghouse.homeapi.gateway.GatewayHeartbeatRepository;
 import com.breathinghouse.homeapi.history.HistoryRepository;
+import com.breathinghouse.homeapi.rooms.RoomRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -29,6 +30,9 @@ class HealthControllerTest {
     @MockitoBean
     private GatewayHeartbeatRepository gatewayHeartbeatRepository;
 
+    @MockitoBean
+    private RoomRepository roomRepository;
+
     @Test
     void getLiveReturnsOkEvenWhenDatabaseUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(false);
@@ -43,6 +47,7 @@ class HealthControllerTest {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(true);
         when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
+        when(roomRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isOk())
@@ -63,6 +68,7 @@ class HealthControllerTest {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(false);
         when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
+        when(roomRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isServiceUnavailable())
@@ -74,6 +80,19 @@ class HealthControllerTest {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(true);
         when(gatewayHeartbeatRepository.isReady()).thenReturn(false);
+        when(roomRepository.isReady()).thenReturn(true);
+
+        mockMvc.perform(get("/ready"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string("NOT_READY\n"));
+    }
+
+    @Test
+    void getReadyReturns503WhenRoomMetadataUnavailable() throws Exception {
+        when(historyRepository.isReady()).thenReturn(true);
+        when(alertRepository.isReady()).thenReturn(true);
+        when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
+        when(roomRepository.isReady()).thenReturn(false);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isServiceUnavailable())
@@ -85,6 +104,7 @@ class HealthControllerTest {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(true);
         when(gatewayHeartbeatRepository.isReady()).thenReturn(true);
+        when(roomRepository.isReady()).thenReturn(true);
 
         mockMvc.perform(get("/ready"))
                 .andExpect(status().isOk())
