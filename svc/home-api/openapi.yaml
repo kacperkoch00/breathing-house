@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: >
     Frontend-facing Breathing House API for room history and alerts.
-    This revision establishes service identity only; currently only health
-    and metrics endpoints are implemented.
+    This revision exposes read-only room discovery and paginated environment
+    and occupancy history. Alert APIs are not implemented yet.
 
 paths:
   /live:
@@ -23,12 +23,271 @@ paths:
   /ready:
     get:
       operationId: getReady
-      summary: Check whether the service is ready
+      summary: Check whether PostgreSQL history tables are readable
       responses:
         '200':
-          description: The service is ready
+          description: Both history tables are queryable
           content:
             text/plain:
               schema:
                 type: string
                 example: READY
+        '503':
+          description: Database or history tables are unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: NOT_READY
+  /api/v1/rooms:
+    get:
+      operationId: listRooms
+      summary: List distinct room IDs from environment and occupancy history
+      responses:
+        '200':
+          description: Sorted distinct room IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomsResponse'
+        '500':
+          description: Database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /api/v1/rooms/{roomId}/environment-readings:
+    get:
+      operationId: listEnvironmentReadings
+      summary: List paginated environment readings for a room
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+        - name: sensorType
+          in: query
+          schema:
+            $ref: '#/components/schemas/SensorType'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated environment readings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentReadingPage'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /api/v1/rooms/{roomId}/occupancy-events:
+    get:
+      operationId: listOccupancyEvents
+      summary: List paginated occupancy events for a room
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+        - name: eventType
+          in: query
+          schema:
+            $ref: '#/components/schemas/EventType'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated occupancy events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OccupancyEventPage'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+components:
+  parameters:
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    From:
+      name: from
+      in: query
+      description: Inclusive lower bound on observedAt (RFC3339)
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      description: Inclusive upper bound on observedAt (RFC3339)
+      schema:
+        type: string
+        format: date-time
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  schemas:
+    SensorType:
+      type: string
+      enum: [ROOM, AIR]
+    EventType:
+      type: string
+      enum: [PRESENCE, OPENING]
+    RoomsResponse:
+      type: object
+      required: [rooms]
+      properties:
+        rooms:
+          type: array
+          items:
+            type: string
+    EnvironmentReading:
+      type: object
+      required:
+        - id
+        - roomId
+        - sensorType
+        - observedAt
+        - receivedAt
+        - ingestedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        roomId:
+          type: string
+        deviceId:
+          type: string
+          nullable: true
+        sensorType:
+          $ref: '#/components/schemas/SensorType'
+        temperature:
+          type: number
+          nullable: true
+        humidity:
+          type: number
+          nullable: true
+        co2:
+          type: number
+          nullable: true
+        light:
+          type: number
+          nullable: true
+        lightLevel:
+          type: string
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+        receivedAt:
+          type: string
+          format: date-time
+        ingestedAt:
+          type: string
+          format: date-time
+    OccupancyEvent:
+      type: object
+      required:
+        - id
+        - roomId
+        - eventType
+        - observedAt
+        - receivedAt
+        - ingestedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        roomId:
+          type: string
+        deviceId:
+          type: string
+          nullable: true
+        eventType:
+          $ref: '#/components/schemas/EventType'
+        present:
+          type: boolean
+          nullable: true
+        open:
+          type: boolean
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+        receivedAt:
+          type: string
+          format: date-time
+        ingestedAt:
+          type: string
+          format: date-time
+    EnvironmentReadingPage:
+      type: object
+      required: [items, limit, offset, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentReading'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+    OccupancyEventPage:
+      type: object
+      required: [items, limit, offset, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OccupancyEvent'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+    ApiError:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string

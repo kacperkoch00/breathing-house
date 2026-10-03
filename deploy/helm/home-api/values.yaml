@@ -29,6 +29,13 @@ ingress:
 
 env:
   HTTP_PORT: "8082"
+  # Local/dev JDBC defaults. Production should inject a read-only DB user via Secret.
+  DATABASE_URL: jdbc:postgresql://postgres:5432/breathing_house
+  DATABASE_USERNAME: bh
+  DATABASE_PASSWORD: bh
+  DATABASE_CONNECTION_TIMEOUT_MS: "2000"
+  DATABASE_QUERY_TIMEOUT_SECONDS: "2"
+  CORS_ALLOWED_ORIGINS: "http://home-dashboard.local,http://localhost:5173"
 
 resources: {}
 
