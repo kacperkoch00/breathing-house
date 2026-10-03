@@ -1,5 +1,6 @@
 import type {
   Alert,
+  AlertDetail,
   AlertStatus,
   EnvironmentReading,
   EventType,
@@ -10,8 +11,6 @@ import type {
   RoomsResponse,
   SensorType,
 } from './types'
-
-const DEFAULT_BASE_URL = 'http://localhost:8082'
 
 export class HomeApiError extends Error {
   readonly status: number
@@ -25,9 +24,10 @@ export class HomeApiError extends Error {
   }
 }
 
+/** Empty string = same-origin relative /api (Vite or nginx proxy). */
 export function getHomeApiBaseUrl(): string {
   const configured = import.meta.env.VITE_HOME_API_BASE_URL?.trim()
-  return configured && configured.length > 0 ? configured.replace(/\/$/, '') : DEFAULT_BASE_URL
+  return configured && configured.length > 0 ? configured.replace(/\/$/, '') : ''
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -119,4 +119,8 @@ export function listAlerts(
 
 export function listActiveAlerts(limit = 20): Promise<PageResponse<Alert>> {
   return listAlerts({ status: 'ACTIVE', limit })
+}
+
+export function getAlert(id: number): Promise<AlertDetail> {
+  return fetchJson<AlertDetail>(`/api/v1/alerts/${id}`)
 }

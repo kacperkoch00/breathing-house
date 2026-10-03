@@ -5,6 +5,9 @@ image:
   tag: dev
   pullPolicy: IfNotPresent
 
+# Cluster-internal home-api base URL for the nginx /api proxy (no trailing slash).
+homeApiUpstream: http://home-api:8082
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
