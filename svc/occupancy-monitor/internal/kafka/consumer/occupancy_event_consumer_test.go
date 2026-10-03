@@ -18,9 +18,8 @@ import (
 )
 
 const validPresencePayload = `{
-	"schemaVersion": 1,
-	"roomId": "kitchen",
-	"deviceId": "presence-1",
+	"schemaVersion": 2,
+	"sensorId": "presence-1",
 	"type": "PRESENCE",
 	"observedAt": "2026-10-03T08:00:00Z",
 	"receivedAt": "2026-10-03T08:00:01Z",
@@ -29,7 +28,7 @@ const validPresencePayload = `{
 
 const validPresenceV2Payload = `{
 	"schemaVersion": 2,
-	"sensorId": "presence-1",
+	"sensorId": "presence-2",
 	"type": "PRESENCE",
 	"observedAt": "2026-10-03T08:00:00Z",
 	"receivedAt": "2026-10-03T08:00:01Z",
@@ -205,7 +204,7 @@ func TestProcessFetchesPersistsAndCommits(t *testing.T) {
 	}
 }
 
-func TestProcessFetchesAcceptsSchemaV1AndV2(t *testing.T) {
+func TestProcessFetchesPassesV2ToStore(t *testing.T) {
 	store := &mockStore{}
 	var committed []int64
 	client := &mockKafkaClient{
@@ -236,12 +235,13 @@ func TestProcessFetchesAcceptsSchemaV1AndV2(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("inserts = %d, want 2", len(events))
 	}
-	if events[0].SchemaVersion != 1 || events[0].RoomID == nil || *events[0].RoomID != "kitchen" {
-		t.Fatalf("v1 event = %+v", events[0])
+	if events[0].SchemaVersion != 2 || events[0].RoomID != nil ||
+		events[0].SensorID == nil || *events[0].SensorID != "presence-1" {
+		t.Fatalf("first event = %+v", events[0])
 	}
 	if events[1].SchemaVersion != 2 || events[1].RoomID != nil ||
-		events[1].SensorID == nil || *events[1].SensorID != "presence-1" {
-		t.Fatalf("v2 event = %+v", events[1])
+		events[1].SensorID == nil || *events[1].SensorID != "presence-2" {
+		t.Fatalf("second event = %+v", events[1])
 	}
 	if len(committed) != 2 || committed[0] != 1 || committed[1] != 2 {
 		t.Fatalf("committed offsets = %v, want [1 2]", committed)

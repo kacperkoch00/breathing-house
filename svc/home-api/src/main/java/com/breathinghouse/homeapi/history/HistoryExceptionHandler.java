@@ -1,5 +1,6 @@
 package com.breathinghouse.homeapi.history;
 
+import com.breathinghouse.homeapi.alerts.AlertNotFoundException;
 import com.breathinghouse.homeapi.rooms.RoomNotFoundException;
 import com.breathinghouse.homeapi.sensors.SensorAssignmentConflictException;
 import com.breathinghouse.homeapi.sensors.SensorNotFoundException;
@@ -35,7 +36,7 @@ public class HistoryExceptionHandler {
                 .body(new ApiError("bad_request", safeMessage(ex)));
     }
 
-    @ExceptionHandler({RoomNotFoundException.class, SensorNotFoundException.class})
+    @ExceptionHandler({RoomNotFoundException.class, SensorNotFoundException.class, AlertNotFoundException.class})
     public ResponseEntity<ApiError> notFound(RuntimeException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ApiError("not_found", ex.getMessage()));

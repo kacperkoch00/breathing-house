@@ -4,8 +4,8 @@ Frontend-facing Breathing House API (BFF) for `home-dashboard`. It owns the
 room and sensor domain model (explicit rooms, discovered sensors, and the
 sensor-to-room assignment) and is the read/query boundary over historical
 environment and occupancy data. It also evaluates configurable alert rules,
-persists alert lifecycle state, and exposes sensor gateway online/offline
-status from Kafka STATUS heartbeats.
+persists alert lifecycle state, serves a read-only alert API, and exposes sensor
+gateway online/offline status from Kafka STATUS heartbeats.
 
 ## Architectural responsibility
 
@@ -61,8 +61,9 @@ The service listens on port `8082` by default.
 
 ## Tests
 
-`mvn -B test` runs unit and H2-backed slice tests. The Flyway V4 data migration
-is verified against real PostgreSQL by `SensorRoomDomainMigrationTest`, which
+`mvn -B test` runs unit and H2-backed slice tests. The Flyway V4/V5 migrations
+(including a fresh install from `deploy/k8s/postgres-init.sql`) are verified
+against real PostgreSQL by `SensorRoomDomainMigrationTest`, which
 is skipped unless `TEST_DATABASE_URL` is set (CI sets it for the bundled
 Postgres service). The user needs the `CREATE DATABASE` privilege; each test
 migrates a throwaway database and drops it afterwards.
@@ -222,22 +223,52 @@ Optional filters:
 
 Records are selected by their **snapshotted** `room_id`, so a record stays in
 the room the sensor was in when it was ingested. Response items expose
-`sensorId` (breaking change: `deviceId` was removed). `sensorId` is read as
-`COALESCE(sensor_id, device_id)` so rows written by not-yet-upgraded monitors
-still show their sensor. It is `null` only for legacy rows that never had a
-sensor identity. Unknown rooms return an empty page.
+`sensorId` (breaking change: `deviceId` was removed); it is read straight from
+the `sensor_id` column and is `null` only for old rows that never had a sensor
+identity. Unknown rooms return an empty page.
 
 Pagination uses `limit + 1` internally and returns `hasMore`. Responses never
 include Kafka topic/partition/offset fields or display names. CORS is enabled
 for `/api/**` (`GET`, `POST`, `PATCH`, `PUT`, `DELETE`, `OPTIONS`) against the
 configured origin allowlist.
 
-## Schema versions and rolling deploy
+## Alert API
 
-Flyway `V4__sensor_room_domain.sql` introduces `home_api.room`,
-`home_api.sensor`, and the additive columns `environment_reading.sensor_id` /
-`occupancy_event.sensor_id`; `room_id` on both history tables becomes nullable
-(null means "ingested while unassigned"). On upgrade it also:
+Read-only access to the alerts persisted by the evaluator. There are no
+write, acknowledge, or notification-delivery endpoints.
+
+```bash
+# Newest first (triggered_at DESC, id DESC); all filters are optional
+curl 'http://localhost:8082/api/v1/alerts?status=ACTIVE&severity=WARNING&roomId=<roomId>&sensorId=air-1&limit=100&offset=0'
+
+# One alert, including the rule snapshot captured when it was raised
+curl http://localhost:8082/api/v1/alerts/42
+```
+
+List filters:
+
+- `status` (`ACTIVE`|`RESOLVED`), `severity` (`INFO`|`WARNING`|`CRITICAL`)
+- `roomId`, `sensorId` (exact match)
+- `from`, `to` (RFC3339, inclusive bounds on `triggeredAt`; `from` > `to` is `400`)
+- `limit` (1–500, default 100), `offset` (>= 0, default 0)
+
+The list uses the same page envelope as the history API
+(`{"items":[...],"limit":100,"offset":0,"hasMore":false}`). Items contain `id`,
+`ruleId`, `roomId`, `sensorId`, `severity`, `status`, `message`,
+`triggerValue`, `triggeredAt`, `resolvedAt`, and `lastEvaluatedAt`.
+`sensorId` is `null` for composite (room-level) alerts and `resolvedAt` is `null`
+while an alert is active. The list never includes `ruleSnapshot`.
+
+`GET /api/v1/alerts/{id}` returns the same fields plus `ruleSnapshot` (the rule
+definition as JSON). Unknown ids return `404 not_found`; invalid enum values,
+timestamps, or paging bounds return `400 bad_request`.
+
+## Schema version
+
+Flyway `V4__sensor_room_domain.sql` introduced `home_api.room`,
+`home_api.sensor`, and the `sensor_id` columns on `environment_reading` /
+`occupancy_event`; `room_id` on both history tables became nullable (null means
+"ingested while unassigned"). On upgrade it also:
 
 1. creates a room for every `room_id` found in history, named from
    `home_api.room_metadata.display_name` (trimmed) or the old `room_id`;
@@ -245,24 +276,30 @@ Flyway `V4__sensor_room_domain.sql` introduces `home_api.room`,
 3. creates one sensor per `sensor_id` (`displayName` = `sensorId`), assigned to
    the room of its newest record across both history tables;
 4. keeps legacy rows without a `device_id` (they keep their `room_id`, have no
-   sensor) and keeps the legacy `device_id` and `room_metadata` columns/tables.
+   sensor).
 
-Wire-format transition: the collector's schema v1 messages carry a room and a
-`deviceId`; schema v2 messages carry only a `sensorId` and the monitors resolve
-the sensor's current room at ingest time (snapshot). Monitors accept both while
-the rollout is in progress. `home-api` already reads either shape
-(`COALESCE(sensor_id, device_id)`) and treats legacy `device_id` values in
-`alert.device_id` / `alert_state.device_id` as sensor IDs.
+`V5__drop_legacy_device_identity.sql` finishes the cleanup:
 
-**Deploy order** (each step is backwards compatible with the previous one):
+- drops `environment_reading.device_id` and `occupancy_event.device_id`
+- renames `alert.device_id` to `sensor_id`, `alert_state.device_id` to
+  `sensor_id`, and `alert_state.device_key` to `sensor_key` (the active-alert
+  unique index and the `alert_state` primary key follow the new names)
+- drops `home_api.room_metadata`
 
-1. `home-api` (applies Flyway V4, serves the new API, reads both shapes)
-2. `environment-monitor` and `occupancy-monitor` (register sensors, snapshot
-   rooms, write `sensor_id`)
-3. `sensors-data-collector` (starts publishing schema v2 messages)
+Wire format: the monitors accept **schema v2 only** (a `sensorId`; they resolve
+the sensor's current room at ingest time and snapshot it) and no longer write
+`device_id`. The `STATUS` gateway heartbeat envelope stays at schema v1; it is
+unchanged and `home_api.gateway_heartbeat.device_id` is untouched. `home-api`
+reads `sensor_id` only.
 
-`device_id` and `room_metadata` are removed by a later cleanup migration once
-all writers are on v2.
+**Deploy note:** V5 drops `device_id`, so monitors that still write it (older
+builds) must be upgraded to the schema-v2-only versions before or together with
+`home-api`; otherwise their inserts fail.
+
+Fresh clusters get the post-V5 history tables from `deploy/k8s/postgres-init.sql`
+(no `device_id`). Because the unchanged V4 still backfills from `device_id`,
+`db/migration/beforeEachMigrate.sql` temporarily adds an empty `device_id`
+column on such databases until V5 has run; V5 then drops it.
 
 ## Alert evaluation
 
@@ -319,7 +356,7 @@ Composite evaluation is per room:
   sensors provide data for a leaf
 - missing or older-than-`maxDataAge` leaf values evaluate as false
 - the parent `rooms` filter and `for` hold duration apply to the combined result
-- one alert/state is stored per `(rule_id, room_id)` with `device_id` null
+- one alert/state is stored per `(rule_id, room_id)` with `sensor_id` null
 - for `ALL`, the initial condition start is the latest `observed_at` among true
   leaves; for `ANY`, it is the earliest
 - `trigger_value` is a JSON object keyed by condition id for true leaves, for
@@ -373,8 +410,9 @@ SQL or code. Composite messages typically use `{{roomId}}`, `{{duration}}`, and
 Pending condition state and active/resolved alert history are stored in
 `home_api.alert_state` and `home_api.alert`. Flyway creates and upgrades these
 tables at startup. Active alerts are deduplicated per rule, room, and sensor
-(composites use a null sensor). The deprecated `device_id` columns now hold the
-`sensorId`. Cleared conditions resolve rather than delete alerts.
+(composites use a null sensor); the sensor columns are `alert.sensor_id`,
+`alert_state.sensor_id`, and `alert_state.sensor_key`. Cleared conditions
+resolve rather than delete alerts.
 
 Alerts follow the **current** sensor assignment:
 
@@ -398,8 +436,8 @@ helm upgrade --install home-api deploy/helm/home-api \
 ```
 
 An existing ConfigMap with an `alerts.json` key can be used through
-`alerts.existingConfigMap`. Alert REST endpoints and notification delivery are
-not implemented yet.
+`alerts.existingConfigMap`. Alerts are readable through the [Alert API](#alert-api);
+notification delivery is not implemented.
 
 ## Readiness
 

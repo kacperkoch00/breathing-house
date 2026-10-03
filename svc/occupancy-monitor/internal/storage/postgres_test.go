@@ -148,14 +148,6 @@ func v2Event(sensorID string, offset int64) event.Event {
 	}
 }
 
-func v1Event(roomID string, sensorID *string, offset int64) event.Event {
-	e := v2Event("", offset)
-	e.SchemaVersion = event.SchemaVersionV1
-	e.RoomID = str(roomID)
-	e.SensorID = sensorID
-	return e
-}
-
 func requireStringPtr(t *testing.T, field string, got *string, want *string) {
 	t.Helper()
 	switch {
@@ -195,7 +187,6 @@ func TestPersistEventV2RegistersUnknownSensor(t *testing.T) {
 
 	row := db.events[0]
 	requireStringPtr(t, "sensor_id", row.SensorID, str("presence-1"))
-	requireStringPtr(t, "device_id", row.DeviceID, str("presence-1"))
 	requireStringPtr(t, "room_id", row.RoomID, nil)
 }
 
@@ -262,37 +253,17 @@ func TestPersistEventSensorMoveAffectsOnlyLaterEvents(t *testing.T) {
 	requireStringPtr(t, "event 3 room_id", db.events[2].RoomID, nil)
 }
 
-func TestPersistEventV1WithDeviceIDRegistersSensor(t *testing.T) {
+func TestPersistEventRequiresSensorID(t *testing.T) {
 	db := newFakeDB()
-	db.sensors["presence-1"] = fakeSensor{displayName: "presence-1", roomID: str("bedroom")}
+	e := v2Event("presence-1", 1)
+	e.SensorID = nil
 
-	if err := persistEvent(context.Background(), db, v1Event("kitchen", str("presence-1"), 1)); err != nil {
-		t.Fatalf("persistEvent() error = %v", err)
+	if err := persistEvent(context.Background(), db, e); err == nil {
+		t.Fatal("persistEvent() error = nil, want error")
 	}
-
-	row := db.events[0]
-	requireStringPtr(t, "sensor_id", row.SensorID, str("presence-1"))
-	requireStringPtr(t, "device_id", row.DeviceID, str("presence-1"))
-	requireStringPtr(t, "room_id", row.RoomID, str("kitchen"))
-	if got := db.sensors["presence-1"].displayName; got != "presence-1" {
-		t.Fatalf("display_name = %q, want presence-1", got)
+	if len(db.sensors) != 0 || len(db.events) != 0 {
+		t.Fatalf("committed sensors=%d events=%d, want none", len(db.sensors), len(db.events))
 	}
-}
-
-func TestPersistEventV1WithoutSensorKeepsEnvelopeRoomAndSkipsUpsert(t *testing.T) {
-	db := newFakeDB()
-
-	if err := persistEvent(context.Background(), db, v1Event("kitchen", nil, 1)); err != nil {
-		t.Fatalf("persistEvent() error = %v", err)
-	}
-
-	if len(db.sensors) != 0 {
-		t.Fatalf("sensors = %d, want 0", len(db.sensors))
-	}
-	row := db.events[0]
-	requireStringPtr(t, "room_id", row.RoomID, str("kitchen"))
-	requireStringPtr(t, "sensor_id", row.SensorID, nil)
-	requireStringPtr(t, "device_id", row.DeviceID, nil)
 }
 
 func TestPersistEventFailureLeavesNoPartialState(t *testing.T) {

@@ -102,7 +102,7 @@ jobs:
           psql -h 127.0.0.1 -U bh -d breathing_house -v ON_ERROR_STOP=1 -f deploy/k8s/postgres-init.sql
           psql -h 127.0.0.1 -U bh -d breathing_house -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO environment.environment_reading (
-            room_id, device_id, sensor_type, temperature, humidity, co2, light, light_level,
+            room_id, sensor_id, sensor_type, temperature, humidity, co2, light, light_level,
             observed_at, received_at, ingested_at, kafka_topic, kafka_partition, kafka_offset
           ) VALUES
             ('living-room', 'air-1', 'AIR', NULL, NULL, 700.0, NULL, NULL,
@@ -116,7 +116,7 @@ jobs:
              'sensor-data', 0, 3);
 
           INSERT INTO occupancy.occupancy_event (
-            room_id, device_id, event_type, present, open,
+            room_id, sensor_id, event_type, present, open,
             observed_at, received_at, ingested_at, kafka_topic, kafka_partition, kafka_offset
           ) VALUES
             ('living-room', 'presence-1', 'PRESENCE', false, NULL,
@@ -260,7 +260,6 @@ jobs:
             .hasMore == false and
             .items[0].roomId == "living-room" and
             .items[0].sensorId == "air-1" and
-            .items[0].deviceId == null and
             .items[0].sensorType == "AIR" and
             .items[0].co2 == 700.0 and
             .items[0].temperature == null and
@@ -293,7 +292,7 @@ jobs:
           done
 
           psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
-            "SELECT device_id IS NULL FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
+            "SELECT sensor_id IS NULL FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
             | grep -q 't'
 
           psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
@@ -303,6 +302,27 @@ jobs:
           psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
             "SELECT trigger_value FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
             | grep -q '{"co2":"700","temperature":"22.5"}'
+
+          alerts_page="$(curl --fail --silent \
+            'http://127.0.0.1:18082/api/v1/alerts?status=ACTIVE&limit=10')"
+          echo "$alerts_page" | jq -e '
+            (.items | length) >= 1 and
+            .limit == 10 and
+            .offset == 0 and
+            (.items | map(select(.ruleId == "ci-poor-air-and-warm")) | length) == 1 and
+            all(.items[]; .status == "ACTIVE" and has("sensorId") and (has("ruleSnapshot") | not))
+          '
+          alert_id="$(echo "$alerts_page" | jq -r '.items | map(select(.ruleId == "ci-poor-air-and-warm")) | .[0].id')"
+          curl --fail --silent "http://127.0.0.1:18082/api/v1/alerts/${alert_id}" | jq -e --argjson id "$alert_id" '
+            .id == $id and
+            .ruleId == "ci-poor-air-and-warm" and
+            .roomId == "living-room" and
+            .sensorId == null and
+            .status == "ACTIVE" and
+            .ruleSnapshot.id == "ci-poor-air-and-warm"
+          '
+          curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:18082/api/v1/alerts/999999999 | grep -q '^404$'
 
           office="$(curl --fail --silent -X POST \
             http://127.0.0.1:18082/api/v1/rooms \

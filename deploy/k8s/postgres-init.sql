@@ -1,5 +1,5 @@
 -- Shared init for local/CI Postgres. Also embedded in deploy/k8s/postgres.yaml.
--- Fresh installs match the post-V4 shape. Existing DBs are upgraded by Flyway V4.
+-- Fresh installs match the post-V5 shape (sensor_id only). Existing DBs are upgraded by Flyway V4/V5.
 CREATE SCHEMA IF NOT EXISTS environment;
 CREATE SCHEMA IF NOT EXISTS occupancy;
 CREATE SCHEMA IF NOT EXISTS home_api;
@@ -31,7 +31,6 @@ CREATE INDEX IF NOT EXISTS sensor_room_id_sensor_id_idx
 CREATE TABLE IF NOT EXISTS environment.environment_reading (
   id BIGSERIAL PRIMARY KEY,
   room_id TEXT,
-  device_id TEXT,
   sensor_id TEXT,
   sensor_type TEXT NOT NULL CHECK (sensor_type IN ('ROOM', 'AIR')),
   temperature DOUBLE PRECISION,
@@ -58,7 +57,6 @@ CREATE INDEX IF NOT EXISTS environment_reading_sensor_id_observed_at_idx
 CREATE TABLE IF NOT EXISTS occupancy.occupancy_event (
   id BIGSERIAL PRIMARY KEY,
   room_id TEXT,
-  device_id TEXT,
   sensor_id TEXT,
   event_type TEXT NOT NULL CHECK (event_type IN ('PRESENCE', 'OPENING')),
   present BOOLEAN,

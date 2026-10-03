@@ -20,7 +20,6 @@ type fakeSensor struct {
 
 type fakeStoredReading struct {
 	roomID   *string
-	deviceID any
 	sensorID any
 	offset   int64
 }
@@ -88,8 +87,7 @@ func (db *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.Comma
 		db.offsets[offset] = true
 		db.readings = append(db.readings, fakeStoredReading{
 			roomID:   args[0].(*string),
-			deviceID: args[1],
-			sensorID: args[2],
+			sensorID: args[1],
 			offset:   offset,
 		})
 	default:
@@ -159,9 +157,6 @@ func TestInsertReadingRegistersNewSensorWithDisplayNameEqualToID(t *testing.T) {
 	got := db.readings[0]
 	if got.sensorID.(*string) == nil || *got.sensorID.(*string) != "sensor-1" {
 		t.Fatalf("sensor_id = %v, want sensor-1", got.sensorID)
-	}
-	if got.deviceID.(*string) == nil || *got.deviceID.(*string) != "sensor-1" {
-		t.Fatalf("device_id = %v, want sensor-1 for compat", got.deviceID)
 	}
 }
 
@@ -243,50 +238,6 @@ func TestMovingSensorAffectsOnlyLaterReadings(t *testing.T) {
 	}
 	if got := db.readings[2].roomID; got != nil {
 		t.Fatalf("reading 3 room_id = %q, want NULL", *got)
-	}
-}
-
-func TestInsertReadingV1WithDeviceKeepsEnvelopeRoomAndRegistersSensor(t *testing.T) {
-	db := newFakeDB()
-	db.sensors["sensor-1"] = &fakeSensor{displayName: "sensor-1", roomID: str("bedroom")}
-
-	r := v2Reading("sensor-1", 1)
-	r.RoomID = str("kitchen")
-
-	if err := newPool(db).InsertReading(context.Background(), r); err != nil {
-		t.Fatalf("InsertReading() error = %v", err)
-	}
-
-	if got := db.readings[0].roomID; got == nil || *got != "kitchen" {
-		t.Fatalf("room_id = %v, want envelope room kitchen", got)
-	}
-}
-
-func TestInsertReadingV1WithoutDeviceSkipsSensorUpsert(t *testing.T) {
-	db := newFakeDB()
-
-	r := v2Reading("ignored", 1)
-	r.SensorID = nil
-	r.RoomID = str("kitchen")
-
-	if err := newPool(db).InsertReading(context.Background(), r); err != nil {
-		t.Fatalf("InsertReading() error = %v", err)
-	}
-
-	if len(db.sensors) != 0 {
-		t.Fatalf("sensors = %v, want none", db.sensors)
-	}
-	for _, sql := range db.execs {
-		if sql == upsertSensorSQL {
-			t.Fatal("sensor upsert must not run without a sensor id")
-		}
-	}
-	got := db.readings[0]
-	if got.roomID == nil || *got.roomID != "kitchen" {
-		t.Fatalf("room_id = %v, want kitchen", got.roomID)
-	}
-	if got.sensorID.(*string) != nil || got.deviceID.(*string) != nil {
-		t.Fatalf("sensor_id/device_id = %v/%v, want NULL", got.sensorID, got.deviceID)
 	}
 }
 

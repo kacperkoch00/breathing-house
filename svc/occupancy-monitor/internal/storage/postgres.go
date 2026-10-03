@@ -27,7 +27,6 @@ WHERE sensor_id = $1;
 const insertEventSQL = `
 INSERT INTO occupancy.occupancy_event (
   room_id,
-  device_id,
   sensor_id,
   event_type,
   present,
@@ -39,7 +38,7 @@ INSERT INTO occupancy.occupancy_event (
   kafka_offset
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 )
 ON CONFLICT (kafka_topic, kafka_partition, kafka_offset)
 DO NOTHING;
@@ -71,17 +70,15 @@ func (p *Pool) Ping(ctx context.Context) error {
 	return p.pool.Ping(ctx)
 }
 
-// InsertEvent persists an occupancy event in one transaction. When the event
-// carries a sensorId the sensor is registered if unknown (display_name is never
-// overwritten). Schema-v2 events snapshot the sensor's current room; schema-v1
-// events keep the envelope roomId. Duplicate Kafka offsets are ignored.
+// InsertEvent persists an occupancy event in one transaction. The sensor is
+// registered if unknown (display_name is never overwritten). The event
+// snapshots the sensor's current room. Duplicate Kafka offsets are ignored.
 func (p *Pool) InsertEvent(ctx context.Context, e event.Event) error {
 	return persistEvent(ctx, pgxEventDB{pool: p.pool}, e)
 }
 
 type eventRow struct {
 	RoomID    *string
-	DeviceID  *string
 	SensorID  *string
 	EventType string
 	Present   *bool
@@ -107,6 +104,10 @@ type eventTx interface {
 }
 
 func persistEvent(ctx context.Context, db eventDB, e event.Event) (err error) {
+	if e.SensorID == nil {
+		return fmt.Errorf("sensor_id: required")
+	}
+
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin occupancy event transaction: %w", err)
@@ -117,8 +118,17 @@ func persistEvent(ctx context.Context, db eventDB, e event.Event) (err error) {
 		}
 	}()
 
+	if err = tx.UpsertSensor(ctx, *e.SensorID); err != nil {
+		return fmt.Errorf("upsert sensor: %w", err)
+	}
+
+	roomID, err := tx.SensorRoomID(ctx, *e.SensorID)
+	if err != nil {
+		return fmt.Errorf("read sensor room: %w", err)
+	}
+
 	row := eventRow{
-		RoomID:         e.RoomID,
+		RoomID:         roomID,
 		SensorID:       e.SensorID,
 		EventType:      e.EventType,
 		Present:        e.Present,
@@ -128,22 +138,6 @@ func persistEvent(ctx context.Context, db eventDB, e event.Event) (err error) {
 		KafkaTopic:     e.KafkaTopic,
 		KafkaPartition: e.KafkaPartition,
 		KafkaOffset:    e.KafkaOffset,
-	}
-
-	if e.SensorID != nil {
-		if err = tx.UpsertSensor(ctx, *e.SensorID); err != nil {
-			return fmt.Errorf("upsert sensor: %w", err)
-		}
-
-		// Schema-v1 keeps the envelope roomId snapshot. Schema-v2 has no room
-		// in the envelope, so resolve the current assignment from home_api.sensor.
-		if row.RoomID == nil {
-			row.RoomID, err = tx.SensorRoomID(ctx, *e.SensorID)
-			if err != nil {
-				return fmt.Errorf("read sensor room: %w", err)
-			}
-		}
-		row.DeviceID = e.SensorID
 	}
 
 	if err = tx.InsertEvent(ctx, row); err != nil {
@@ -197,7 +191,6 @@ func (t pgxEventTx) InsertEvent(ctx context.Context, row eventRow) error {
 		ctx,
 		insertEventSQL,
 		row.RoomID,
-		row.DeviceID,
 		row.SensorID,
 		row.EventType,
 		row.Present,

@@ -45,11 +45,11 @@ class SensorRepositoryTest {
         insertSensor("hub-1", "Hub", "room-a");
         insertSensor("air-1", "air-1", null);
         insertSensor("silent-1", "silent-1", null);
-        insertEnvironment("air-1", null, "AIR");
-        insertEnvironment("air-1", null, "AIR");
-        insertEnvironment("hub-1", null, "ROOM");
-        insertOccupancy("hub-1", null, "PRESENCE");
-        insertOccupancy("hub-1", null, "OPENING");
+        insertEnvironment("air-1", "AIR");
+        insertEnvironment("air-1", "AIR");
+        insertEnvironment("hub-1", "ROOM");
+        insertOccupancy("hub-1", "PRESENCE");
+        insertOccupancy("hub-1", "OPENING");
 
         assertThat(repository.listSensors()).containsExactly(
                 new SensorSummary("air-1", "air-1", List.of("AIR"), null),
@@ -58,12 +58,12 @@ class SensorRepositoryTest {
     }
 
     @Test
-    void typesFallBackToLegacyDeviceIdAndIgnoreOtherSensors() {
+    void typesAreScopedToTheRequestedSensor() {
         insertSensor("legacy-1", "legacy-1", null);
         insertSensor("other-1", "other-1", null);
-        insertEnvironment(null, "legacy-1", "AIR");
-        insertOccupancy(null, "legacy-1", "OPENING");
-        insertEnvironment("other-1", null, "ROOM");
+        insertEnvironment("legacy-1", "AIR");
+        insertOccupancy("legacy-1", "OPENING");
+        insertEnvironment("other-1", "ROOM");
 
         assertThat(repository.findById("legacy-1"))
                 .get()
@@ -78,7 +78,7 @@ class SensorRepositoryTest {
 
     @Test
     void historyOnlySensorsAreNotDiscoveredUntilRegistered() {
-        insertEnvironment("history-only", null, "AIR");
+        insertEnvironment("history-only", "AIR");
 
         assertThat(repository.listSensors()).isEmpty();
         assertThat(repository.findById("history-only")).isEmpty();
@@ -144,19 +144,19 @@ class SensorRepositoryTest {
                 """, sensorId, displayName, roomId);
     }
 
-    private void insertEnvironment(String sensorId, String deviceId, String sensorType) {
+    private void insertEnvironment(String sensorId, String sensorType) {
         jdbc.update("""
                 INSERT INTO environment.environment_reading (
-                  room_id, sensor_id, device_id, sensor_type, observed_at, received_at
-                ) VALUES (NULL, ?, ?, ?, ?, ?)
-                """, sensorId, deviceId, sensorType, Timestamp.from(NOW), Timestamp.from(NOW));
+                  room_id, sensor_id, sensor_type, observed_at, received_at
+                ) VALUES (NULL, ?, ?, ?, ?)
+                """, sensorId, sensorType, Timestamp.from(NOW), Timestamp.from(NOW));
     }
 
-    private void insertOccupancy(String sensorId, String deviceId, String eventType) {
+    private void insertOccupancy(String sensorId, String eventType) {
         jdbc.update("""
                 INSERT INTO occupancy.occupancy_event (
-                  room_id, sensor_id, device_id, event_type, observed_at, received_at
-                ) VALUES (NULL, ?, ?, ?, ?, ?)
-                """, sensorId, deviceId, eventType, Timestamp.from(NOW), Timestamp.from(NOW));
+                  room_id, sensor_id, event_type, observed_at, received_at
+                ) VALUES (NULL, ?, ?, ?, ?)
+                """, sensorId, eventType, Timestamp.from(NOW), Timestamp.from(NOW));
     }
 }

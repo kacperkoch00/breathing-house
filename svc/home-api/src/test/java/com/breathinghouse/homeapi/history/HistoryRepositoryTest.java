@@ -105,15 +105,13 @@ class HistoryRepositoryTest {
     }
 
     @Test
-    void mapsSensorIdAndFallsBackToLegacyDeviceId() {
+    void mapsSensorIdAndKeepsNullWhenAbsent() {
         jdbcTemplate.update("""
                 INSERT INTO environment.environment_reading (
-                  room_id, device_id, sensor_id, sensor_type, co2, observed_at, received_at
-                ) VALUES ('living-room', 'legacy-1', NULL, 'AIR', 500, ?, ?),
-                         ('living-room', 'legacy-1', 'sensor-9', 'AIR', 600, ?, ?),
-                         ('living-room', NULL, NULL, 'AIR', 700, ?, ?)
+                  room_id, sensor_id, sensor_type, co2, observed_at, received_at
+                ) VALUES ('living-room', 'sensor-9', 'AIR', 600, ?, ?),
+                         ('living-room', NULL, 'AIR', 700, ?, ?)
                 """,
-                Instant.parse("2026-10-03T08:00:00Z"), Instant.parse("2026-10-03T08:00:00Z"),
                 Instant.parse("2026-10-03T09:00:00Z"), Instant.parse("2026-10-03T09:00:00Z"),
                 Instant.parse("2026-10-03T10:00:00Z"), Instant.parse("2026-10-03T10:00:00Z"));
 
@@ -121,21 +119,21 @@ class HistoryRepositoryTest {
                 "living-room", null, null, null, 100, 0);
 
         assertThat(page.items()).extracting(EnvironmentReading::sensorId)
-                .containsExactly(null, "sensor-9", "legacy-1");
+                .containsExactly(null, "sensor-9");
     }
 
     @Test
-    void occupancyFallsBackToLegacyDeviceId() {
+    void occupancyMapsSensorId() {
         jdbcTemplate.update("""
                 INSERT INTO occupancy.occupancy_event (
-                  room_id, device_id, sensor_id, event_type, present, observed_at, received_at
-                ) VALUES ('kitchen', 'legacy-door', NULL, 'PRESENCE', true, ?, ?)
+                  room_id, sensor_id, event_type, present, observed_at, received_at
+                ) VALUES ('kitchen', 'door-1', 'PRESENCE', true, ?, ?)
                 """, Instant.parse("2026-10-03T08:00:00Z"), Instant.parse("2026-10-03T08:00:00Z"));
 
         PageResponse<OccupancyEvent> page = historyRepository.findOccupancyEvents(
                 "kitchen", null, null, null, 100, 0);
 
-        assertThat(page.items()).extracting(OccupancyEvent::sensorId).containsExactly("legacy-door");
+        assertThat(page.items()).extracting(OccupancyEvent::sensorId).containsExactly("door-1");
     }
 
     @Test

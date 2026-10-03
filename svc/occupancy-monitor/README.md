@@ -6,49 +6,41 @@ PostgreSQL table `occupancy.occupancy_event`. Offsets are committed only after a
 successful insert (or idempotent conflict ignore). `/live` is always up when the
 process is running. `/ready` requires Kafka and database connectivity.
 
-## Event schema (v1 and v2)
+## Event schema
 
-Both versions use the same envelope (`type`, `observedAt`, `receivedAt`,
-`values`) for `PRESENCE` (`values.present`) and `OPENING` (`values.open`).
-Other `schemaVersion` values, and records that fail validation, are logged,
-skipped, and their offsets committed.
+Only `schemaVersion: 2` is accepted on `event-data`. Legacy fields `roomId` and
+`deviceId` are rejected. `sensorId` is required (trimmed, non-blank, max 200
+characters). The envelope (`type`, `observedAt`, `receivedAt`, `values`) covers
+`PRESENCE` (`values.present`) and `OPENING` (`values.open`).
 
-| | v1 (legacy) | v2 |
-| :-- | :---------- | :-- |
-| Sensor identity | `deviceId`, trimmed; absent or blank means no sensor | `sensorId`, required, trimmed, non-blank, max 200 characters |
-| Room identity | `roomId` required; always retained as the history snapshot | Must be absent; resolved from `home_api.sensor` at persist time (`roomId`/`deviceId` rejected) |
+Other `schemaVersion` values (including `1`), and records that fail validation,
+are logged, skipped, and their offsets committed.
 
 ## Sensor registration and room snapshots
 
 Each event is persisted in one transaction, and the Kafka offset is committed
 only after that transaction commits:
 
-1. When a sensor identity is present, register it:
+1. Register the sensor:
    `INSERT INTO home_api.sensor ... ON CONFLICT DO NOTHING` with
    `display_name = sensorId` (truncated to the 100-character column limit). An
    existing sensor, including its `display_name` and `room_id`, is never
    overwritten.
-2. Resolve the room snapshot:
-   - schema v1: keep the envelope `roomId`
-   - schema v2: read the sensor's current `room_id` (may be `NULL` when unassigned)
-3. Insert into `occupancy.occupancy_event` with `sensor_id`, that `room_id`
-   snapshot, and `device_id = sensorId` for compatibility with older readers.
+2. Read the sensor's current `room_id` (may be `NULL` when unassigned).
+3. Insert into `occupancy.occupancy_event` with `sensor_id` and that `room_id`
+   snapshot. The deprecated `device_id` column is not written.
 4. Commit; then commit the Kafka offset.
 
-For schema v2, the stored `room_id` is the assignment at ingest time, so moving
-or unassigning a sensor in `home-api` affects only later events. Duplicate
+The stored `room_id` is the assignment at ingest time, so moving or unassigning
+a sensor in `home-api` affects only later events. Duplicate
 `(topic, partition, offset)` deliveries are ignored.
-
-A v1 event without `deviceId` skips sensor registration: it is stored with the
-envelope `roomId` and a `NULL` `sensor_id`.
 
 ### Rollout order
 
 1. Deploy `home-api` so Flyway `V4__sensor_room_domain.sql` runs (or use the
    updated `deploy/k8s/postgres-init.sql` on fresh databases).
-2. Deploy this service (and `environment-monitor`); both accept v1 and v2.
-3. Deploy `sensors-data-collector` (schema v2 producers). Do not drop v1
-   support until no v1 producers remain.
+2. Deploy this service (and `environment-monitor`); both accept schema v2 only.
+3. Deploy `sensors-data-collector` (schema v2 producers).
 
 ## Local development
 
