@@ -13,6 +13,10 @@ http {
     sendfile on;
     keepalive_timeout 65;
 
+    # Runtime DNS so nginx can start before home-api exists (CI installs
+    # home-dashboard alone). Taken from the pod's /etc/resolv.conf.
+    resolver ${NGINX_RESOLVER} valid=10s ipv6=off;
+
     client_body_temp_path /tmp/nginx/client_temp;
     proxy_temp_path /tmp/nginx/proxy_temp;
     fastcgi_temp_path /tmp/nginx/fastcgi_temp;
@@ -26,7 +30,9 @@ http {
         index index.html;
 
         location /api/ {
-            proxy_pass ${HOME_API_UPSTREAM};
+            # Variable proxy_pass defers upstream lookup to request time.
+            set $home_api_upstream "${HOME_API_UPSTREAM}";
+            proxy_pass $home_api_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host $proxy_host;
             proxy_set_header X-Real-IP $remote_addr;
