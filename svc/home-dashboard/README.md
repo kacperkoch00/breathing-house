@@ -1,8 +1,10 @@
 # Home Dashboard
 
-Minimal React and Vite overview for Breathing House. The start page loads live
-data from `home-api`: gateway status, rooms, latest environment readings, and
-active alerts.
+Minimal React and Vite overview for Breathing House. The start page (`/`) loads
+live data from `home-api`: gateway status, rooms, latest environment readings,
+and active alerts. Room cards link to `/rooms/:roomId` for latest conditions,
+active alerts for that room, a 24h temperature sparkline, and recent occupancy
+events.
 
 ```bash
 npm install
