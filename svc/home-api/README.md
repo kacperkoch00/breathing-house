@@ -106,16 +106,76 @@ Supported rule types:
 - `THRESHOLD`: numeric ROOM/AIR metrics with an operator and hold duration
 - `BOOLEAN_STATE`: `PRESENT` or `OPEN` equal to a configured boolean
 - `STALE_DATA`: latest matching reading/event is older than `for`
+- `COMPOSITE`: combine two or more leaf conditions for the same room
+
+`COMPOSITE` rules use a `combinator` of `ALL` (every condition true) or `ANY`
+(at least one true). Leaf conditions may be `THRESHOLD` or `BOOLEAN_STATE` and
+may use different sensor types or sources. Nested composites and `STALE_DATA`
+leaves are not supported. Parent leaf fields (`source`, `sensorType`,
+`eventType`, `metric`, `operator`, `threshold`, `field`, `expected`,
+`maxDataAge`) must not be set on the composite itself; each leaf carries its
+own fields, including a required positive `maxDataAge`.
+
+Composite evaluation is per room:
+
+- the newest matching observation (by `observed_at`) is used when multiple
+  devices provide data for a leaf
+- missing or older-than-`maxDataAge` leaf values evaluate as false
+- the parent `rooms` filter and `for` hold duration apply to the combined result
+- one alert/state is stored per `(rule_id, room_id)` with `device_id` null
+- for `ALL`, the initial condition start is the latest `observed_at` among true
+  leaves; for `ANY`, it is the earliest
+- `trigger_value` is a JSON object keyed by condition id for true leaves, for
+  example `{"co2":"1450","temperature":"29.5"}`
+
+Example (not packaged in the defaults):
+
+```json
+{
+  "id": "poor-air-and-hot",
+  "enabled": true,
+  "type": "COMPOSITE",
+  "combinator": "ALL",
+  "for": "5m",
+  "severity": "WARNING",
+  "rooms": ["*"],
+  "message": "Poor conditions in {{roomId}}: {{values}}",
+  "conditions": [
+    {
+      "id": "co2",
+      "type": "THRESHOLD",
+      "source": "ENVIRONMENT",
+      "sensorType": "AIR",
+      "metric": "CO2",
+      "operator": "GREATER_THAN",
+      "threshold": 1200,
+      "maxDataAge": "2m"
+    },
+    {
+      "id": "temperature",
+      "type": "THRESHOLD",
+      "source": "ENVIRONMENT",
+      "sensorType": "ROOM",
+      "metric": "TEMPERATURE",
+      "operator": "GREATER_THAN",
+      "threshold": 28,
+      "maxDataAge": "2m"
+    }
+  ]
+}
+```
 
 Durations accept `ms`, `s`, `m`, `h`, `d`, or ISO-8601 values. Room lists can
 contain explicit room IDs or `"*"`. Message placeholders are limited to
-`{{roomId}}`, `{{deviceId}}`, `{{value}}`, `{{threshold}}`, and
-`{{duration}}`; configuration cannot execute SQL or code.
+`{{roomId}}`, `{{deviceId}}`, `{{value}}`, `{{values}}`, `{{threshold}}`, and
+`{{duration}}`; configuration cannot execute SQL or code. Composite messages
+typically use `{{roomId}}`, `{{duration}}`, and `{{values}}`.
 
 Pending condition state and active/resolved alert history are stored in
 `home_api.alert_state` and `home_api.alert`. Flyway creates and upgrades these
-tables at startup. Active alerts are deduplicated per rule, room, and device.
-Cleared conditions resolve rather than delete alerts.
+tables at startup. Active alerts are deduplicated per rule, room, and device
+(composites use a null device). Cleared conditions resolve rather than delete
+alerts.
 
 For local Helm installs, use the packaged defaults or provide a file:
 

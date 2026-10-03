@@ -102,18 +102,35 @@ jobs:
           {
             "evaluationInterval": "1s",
             "alerts": [{
-              "id": "ci-high-co2",
-              "type": "THRESHOLD",
-              "source": "ENVIRONMENT",
-              "sensorType": "AIR",
-              "metric": "CO2",
-              "operator": "GREATER_THAN",
-              "threshold": 600,
+              "id": "ci-poor-air-and-warm",
+              "type": "COMPOSITE",
+              "combinator": "ALL",
               "for": "0s",
-              "maxDataAge": "36500d",
               "severity": "WARNING",
               "rooms": ["living-room"],
-              "message": "CI CO2 alert in {{roomId}} at {{value}}"
+              "message": "CI composite in {{roomId}}: {{values}}",
+              "conditions": [
+                {
+                  "id": "co2",
+                  "type": "THRESHOLD",
+                  "source": "ENVIRONMENT",
+                  "sensorType": "AIR",
+                  "metric": "CO2",
+                  "operator": "GREATER_THAN",
+                  "threshold": 600,
+                  "maxDataAge": "36500d"
+                },
+                {
+                  "id": "temperature",
+                  "type": "THRESHOLD",
+                  "source": "ENVIRONMENT",
+                  "sensorType": "ROOM",
+                  "metric": "TEMPERATURE",
+                  "operator": "GREATER_THAN",
+                  "threshold": 20,
+                  "maxDataAge": "36500d"
+                }
+              ]
             }]
           }
           JSON
@@ -168,20 +185,28 @@ jobs:
 
           for attempt in $(seq 1 30); do
             active_alerts="$(psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
-              "SELECT count(*) FROM home_api.alert WHERE rule_id = 'ci-high-co2' AND status = 'ACTIVE'")"
+              "SELECT count(*) FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'")"
             if test "$active_alerts" = "1"; then
               break
             fi
             if test "$attempt" -eq 30; then
-              echo "expected active CI alert was not created"
+              echo "expected active CI composite alert was not created"
               exit 1
             fi
             sleep 1
           done
 
           psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
-            "SELECT message FROM home_api.alert WHERE rule_id = 'ci-high-co2' AND status = 'ACTIVE'" \
-            | grep -q 'CI CO2 alert in living-room at 700'
+            "SELECT device_id IS NULL FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
+            | grep -q 't'
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+            "SELECT message FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
+            | grep -q 'CI composite in living-room: {"co2":"700","temperature":"22.5"}'
+
+          psql -h 127.0.0.1 -U bh -d breathing_house -Atc \
+            "SELECT trigger_value FROM home_api.alert WHERE rule_id = 'ci-poor-air-and-warm' AND status = 'ACTIVE'" \
+            | grep -q '{"co2":"700","temperature":"22.5"}'
       - name: Helm lint
         run: helm lint deploy/helm/home-api
       - name: Package Helm chart
