@@ -120,6 +120,9 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("KAFKA_CONSUMER_TOPIC", "test-events")
 	t.Setenv("KAFKA_CONSUMER_GROUP_ID", "test-group")
 	t.Setenv("KAFKA_RETRY_DELAY", "2s")
+	t.Setenv("DATABASE_URL", "postgres://bh:bh@db:5432/breathing_house?sslmode=disable")
+	t.Setenv("DATABASE_TIMEOUT", "3s")
+	t.Setenv("DATABASE_RETRY_DELAY", "4s")
 
 	config, err := loadConfig()
 	if err != nil {
@@ -164,6 +167,18 @@ func TestLoadConfig(t *testing.T) {
 			config.KafkaRetryDelay,
 			2*time.Second,
 		)
+	}
+
+	if config.DatabaseURL != "postgres://bh:bh@db:5432/breathing_house?sslmode=disable" {
+		t.Fatalf("DatabaseURL = %q, want configured value", config.DatabaseURL)
+	}
+
+	if config.DatabaseTimeout != 3*time.Second {
+		t.Fatalf("DatabaseTimeout = %v, want %v", config.DatabaseTimeout, 3*time.Second)
+	}
+
+	if config.DatabaseRetryDelay != 4*time.Second {
+		t.Fatalf("DatabaseRetryDelay = %v, want %v", config.DatabaseRetryDelay, 4*time.Second)
 	}
 }
 

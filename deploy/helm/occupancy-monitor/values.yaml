@@ -35,6 +35,9 @@ env:
   KAFKA_CONSUMER_TOPIC: event-data
   KAFKA_CONSUMER_GROUP_ID: occupancy-monitor
   KAFKA_RETRY_DELAY: 5s
+  DATABASE_URL: postgres://bh:bh@postgres:5432/breathing_house?sslmode=disable
+  DATABASE_TIMEOUT: 2s
+  DATABASE_RETRY_DELAY: 5s
 
 resources: {}
 

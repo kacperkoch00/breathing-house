@@ -51,7 +51,7 @@ func TestHealthEndpoints(t *testing.T) {
 		})
 	}
 
-	t.Run("ready after Kafka becomes healthy", func(t *testing.T) {
+	t.Run("ready after dependencies become healthy", func(t *testing.T) {
 		readiness.SetReady(true)
 
 		recorder := httptest.NewRecorder()
