@@ -6,9 +6,9 @@ Breathing House contains the services and deployment assets for the home environ
 
 ```text
 svc/                         Service source code
-  environment-monitor/       Consumes Kafka sensor-data
-  occupancy-monitor/         Consumes Kafka event-data
-  alert-notifier/            Alert notification service (health-only for now)
+  environment-monitor/       Consumes Kafka and persists environment readings
+  occupancy-monitor/         Consumes Kafka and persists occupancy events
+  home-api/                  Frontend-facing API/BFF for room history and alerts
   home-dashboard/            Static Vite/React start page
   sensors-data-collector/    MQTT → Kafka collector
 deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
@@ -30,9 +30,10 @@ Local Postgres (Minikube only): ClusterIP service `postgres:5432`, database `bre
 Each service has its own README with local development, testing, image, and
 deployment instructions.
 
-- **environment-monitor** and **occupancy-monitor** (Go): HTTP health endpoints plus Kafka consumers (`sensor-data` / `event-data`). Domain logic is still thin (poll and log). `/ready` requires a successful Kafka ping.
+- **environment-monitor** (Go): consumes Kafka `sensor-data` and persists environment readings. `/ready` requires Kafka and database connectivity.
+- **occupancy-monitor** (Go): consumes Kafka `event-data` and persists occupancy events. `/ready` requires Kafka and database connectivity.
 - **sensors-data-collector** (Spring Boot): consumes MQTT sensor topics, validates and transforms payloads, publishes to Kafka.
-- **alert-notifier** (Spring Boot): health endpoints only while alert delivery is built.
+- **home-api** (Spring Boot): single backend API consumed by `home-dashboard`; future read/query boundary for historical environment and occupancy data, and owner of alert persistence, lifecycle, and alert-facing endpoints. This rename establishes service identity and responsibility; currently only health and metrics endpoints are implemented (history and alert APIs do not exist yet).
 - **home-dashboard** (React/Vite): static UI with mock data; not wired to live backends yet.
 
 Backend services keep their HTTP contract in an `openapi.yaml` file. Go services
@@ -63,7 +64,7 @@ Load each local image into Minikube and install each chart with Ingress enabled.
 `make k8s-deploy` also starts MQTT, Kafka, and Postgres (`k8s-start` + `k8s-mqtt` + `k8s-kafka` + `k8s-postgres`):
 
 ```bash
-for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
   make k8s-load SERVICE="$service" IMAGE="localhost/$service:dev"
   make k8s-deploy SERVICE="$service" K8S_RELEASE="$service"
 done
@@ -72,7 +73,7 @@ done
 Wait for all services:
 
 ```bash
-for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
   deployment=$(kubectl get deployment -l "app.kubernetes.io/name=$service" -o jsonpath='{.items[0].metadata.name}')
   kubectl rollout status "deployment/$deployment" --timeout=180s
 done
@@ -101,7 +102,7 @@ charts with their matching images:
 CHART_VERSION=0.1.0-ci.<github-run-number>
 IMAGE_TAG=sha-<commit>
 
-for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
   helm upgrade --install "$service" \
     "oci://ghcr.io/<owner>/charts/$service" \
     --version "$CHART_VERSION" \
@@ -209,7 +210,7 @@ Prometheus scrape targets assume services in the `default` namespace:
 | :-- | :----- |
 | `environment-monitor` | `environment-monitor.default.svc:8080/metrics` |
 | `occupancy-monitor` | `occupancy-monitor.default.svc:8081/metrics` |
-| `alert-notifier` | `alert-notifier.default.svc:8082/actuator/prometheus` |
+| `home-api` | `home-api.default.svc:8082/actuator/prometheus` |
 | `sensors-data-collector` | `sensors-data-collector.default.svc:8083/actuator/prometheus` |
 
 Access Grafana:
@@ -237,7 +238,7 @@ Add these hostnames to `/etc/hosts` for browser and curl access:
 ```text
 <minikube-ip> environment-monitor.local
 <minikube-ip> occupancy-monitor.local
-<minikube-ip> alert-notifier.local
+<minikube-ip> home-api.local
 <minikube-ip> sensors-data-collector.local
 <minikube-ip> home-dashboard.local
 ```
@@ -247,7 +248,7 @@ Backend health checks go through Ingress:
 ```bash
 curl -H 'Host: environment-monitor.local' "http://$MINIKUBE_IP/live"
 curl -H 'Host: occupancy-monitor.local' "http://$MINIKUBE_IP/live"
-curl -H 'Host: alert-notifier.local' "http://$MINIKUBE_IP/live"
+curl -H 'Host: home-api.local' "http://$MINIKUBE_IP/live"
 curl -H 'Host: sensors-data-collector.local' "http://$MINIKUBE_IP/live"
 ```
 
@@ -314,7 +315,7 @@ Images are published as:
 ```text
 ghcr.io/<owner>/environment-monitor:latest
 ghcr.io/<owner>/occupancy-monitor:latest
-ghcr.io/<owner>/alert-notifier:latest
+ghcr.io/<owner>/home-api:latest
 ghcr.io/<owner>/sensors-data-collector:latest
 ghcr.io/<owner>/home-dashboard:latest
 ```
@@ -334,7 +335,7 @@ Each service chart is published alongside its image as an OCI artifact:
 ```text
 oci://ghcr.io/<owner>/charts/environment-monitor
 oci://ghcr.io/<owner>/charts/occupancy-monitor
-oci://ghcr.io/<owner>/charts/alert-notifier
+oci://ghcr.io/<owner>/charts/home-api
 oci://ghcr.io/<owner>/charts/sensors-data-collector
 oci://ghcr.io/<owner>/charts/home-dashboard
 ```
@@ -343,10 +344,10 @@ The chart version is `0.1.0-ci.<github-run-number>` and its `appVersion` is the
 image commit SHA. Install a published chart with the matching image tag:
 
 ```bash
-helm upgrade --install alert-notifier \
-  oci://ghcr.io/<owner>/charts/alert-notifier \
+helm upgrade --install home-api \
+  oci://ghcr.io/<owner>/charts/home-api \
   --version 0.1.0-ci.<github-run-number> \
-  --set image.repository=ghcr.io/<owner>/alert-notifier \
+  --set image.repository=ghcr.io/<owner>/home-api \
   --set image.tag=sha-<commit>
 ```
 

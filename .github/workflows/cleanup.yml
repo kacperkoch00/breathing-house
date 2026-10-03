@@ -15,12 +15,12 @@ jobs:
       fail-fast: false
       matrix:
         package:
-          - alert-notifier
+          - home-api
           - environment-monitor
           - home-dashboard
           - occupancy-monitor
           - sensors-data-collector
-          - charts/alert-notifier
+          - charts/home-api
           - charts/environment-monitor
           - charts/home-dashboard
           - charts/occupancy-monitor

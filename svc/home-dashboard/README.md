@@ -1,7 +1,8 @@
 # Home Dashboard
 
 Minimal React and Vite dashboard start page for Breathing House. The UI uses
-static/mock room readings and is not wired to live backends yet.
+static/mock room readings and is not wired to live backends yet. The intended
+backend is `home-api` (history and alert APIs are not implemented yet).
 
 ```bash
 npm install
@@ -32,7 +33,7 @@ docker push ghcr.io/<owner>/home-dashboard:0.1.0
 ```
 
 The production container serves the dashboard on port `8080`. `openapi.yaml` is
-a placeholder until the dashboard has a backend API.
+a placeholder until the dashboard is wired to `home-api`.
 
 ## Kubernetes
 

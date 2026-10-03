@@ -258,7 +258,7 @@ jobs:
 
       - name: Build service images
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             echo "==> Building $service"
 
             docker build \
@@ -268,7 +268,7 @@ jobs:
 
       - name: Load service images into Kind
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             echo "==> Loading $service"
 
             kind load docker-image \
@@ -278,7 +278,7 @@ jobs:
 
       - name: Deploy all services
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             echo "==> Deploying $service"
 
             helm upgrade --install "$service" \
@@ -296,7 +296,7 @@ jobs:
 
       - name: Wait for all service rollouts
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             echo "==> Waiting for $service"
 
             deployment=$(kubectl get deployment \
@@ -315,7 +315,7 @@ jobs:
 
       - name: Verify application logs
         run: |
-          services="environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard"
+          services="environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard"
 
           failed=0
 
@@ -426,7 +426,7 @@ jobs:
 
       - name: Check logs for all services
         run: |
-          services="environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard"
+          services="environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard"
 
           failed=0
 
@@ -536,7 +536,7 @@ jobs:
             --tail=200 \
             > logging-results/kafka.log 2>&1 || true
 
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             kubectl logs \
               -l "app.kubernetes.io/name=$service" \
               --all-containers=true \

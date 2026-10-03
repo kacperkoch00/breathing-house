@@ -96,7 +96,7 @@ kubectl create secret docker-registry ghcr-pull-secret \
   --docker-email=<email>
 ```
 
-Repeat with `occupancy-monitor`, `alert-notifier`, `sensors-data-collector`, or
+Repeat with `occupancy-monitor`, `home-api`, `sensors-data-collector`, or
 `home-dashboard` as needed.
 
 ## Access through Ingress
@@ -112,7 +112,7 @@ The default hosts are:
 ```text
 environment-monitor.local
 occupancy-monitor.local
-alert-notifier.local
+home-api.local
 sensors-data-collector.local
 home-dashboard.local
 ```

@@ -11,7 +11,7 @@ All services are up and running
     FOR    ${service}    ${path}    IN
     ...    environment-monitor    /live
     ...    occupancy-monitor    /live
-    ...    alert-notifier    /live
+    ...    home-api    /live
     ...    sensors-data-collector    /live
     ...    home-dashboard    /
         ${headers}=    Create Dictionary    Host=${service}.local
@@ -24,7 +24,7 @@ All services are ready
     FOR    ${service}    ${path}    IN
     ...    environment-monitor    /ready
     ...    occupancy-monitor    /ready
-    ...    alert-notifier    /ready
+    ...    home-api    /ready
     ...    sensors-data-collector    /ready
     ...    home-dashboard    /
         ${headers}=    Create Dictionary    Host=${service}.local
