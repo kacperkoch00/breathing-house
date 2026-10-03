@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	SchemaVersionV1   = 1
 	SchemaVersionV2   = 2
 	EventTypePresence = "PRESENCE"
 	EventTypeOpening  = "OPENING"
@@ -19,10 +18,8 @@ const (
 
 // Event is the internal model persisted to occupancy.occupancy_event.
 //
-// SensorID is the stable sensor identity: the trimmed v1 deviceId (nil when
-// absent) or the required v2 sensorId. RoomID is only set for v1 events, where
-// it carries the legacy envelope roomId; for v2 the room is resolved at persist
-// time from home_api.sensor.
+// SensorID is the required stable sensor identity. RoomID is nil at decode time
+// and resolved from home_api.sensor when the event is persisted.
 type Event struct {
 	SchemaVersion  int
 	SensorID       *string
@@ -57,36 +54,26 @@ type openingValues struct {
 }
 
 // Decode validates a Kafka payload and maps it to an Event with Kafka metadata.
-// Schema versions 1 and 2 are accepted.
+// Only schemaVersion 2 is accepted.
 func Decode(payload []byte, topic string, partition int32, offset int64) (Event, error) {
 	var env envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return Event{}, fmt.Errorf("decode envelope: %w", err)
 	}
 
-	var sensorID, roomID *string
-	switch env.SchemaVersion {
-	case SchemaVersionV1:
-		if env.RoomID == nil || strings.TrimSpace(*env.RoomID) == "" {
-			return Event{}, fmt.Errorf("roomId: required")
-		}
-		legacyRoomID := strings.TrimSpace(*env.RoomID)
-		roomID = &legacyRoomID
-		sensorID = normalizeOptionalString(env.DeviceID)
-	case SchemaVersionV2:
-		if env.RoomID != nil {
-			return Event{}, fmt.Errorf("roomId: not allowed in schemaVersion %d", SchemaVersionV2)
-		}
-		if env.DeviceID != nil {
-			return Event{}, fmt.Errorf("deviceId: not allowed in schemaVersion %d", SchemaVersionV2)
-		}
-		var err error
-		sensorID, err = decodeSensorID(env.SensorID)
-		if err != nil {
-			return Event{}, err
-		}
-	default:
-		return Event{}, fmt.Errorf("schemaVersion: want %d or %d, got %d", SchemaVersionV1, SchemaVersionV2, env.SchemaVersion)
+	if env.SchemaVersion != SchemaVersionV2 {
+		return Event{}, fmt.Errorf("schemaVersion: want %d, got %d", SchemaVersionV2, env.SchemaVersion)
+	}
+	if env.RoomID != nil {
+		return Event{}, fmt.Errorf("roomId: not allowed in schemaVersion %d", SchemaVersionV2)
+	}
+	if env.DeviceID != nil {
+		return Event{}, fmt.Errorf("deviceId: not allowed in schemaVersion %d", SchemaVersionV2)
+	}
+
+	sensorID, err := decodeSensorID(env.SensorID)
+	if err != nil {
+		return Event{}, err
 	}
 
 	if env.Type != EventTypePresence && env.Type != EventTypeOpening {
@@ -106,7 +93,6 @@ func Decode(payload []byte, topic string, partition int32, offset int64) (Event,
 	event := Event{
 		SchemaVersion:  env.SchemaVersion,
 		SensorID:       sensorID,
-		RoomID:         roomID,
 		EventType:      env.Type,
 		ObservedAt:     observedAt,
 		ReceivedAt:     receivedAt,

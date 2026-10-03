@@ -86,22 +86,22 @@ class AlertRepositoryTest {
     }
 
     @Test
-    void snapshotsExposeSensorIdFromSensorIdOrLegacyDeviceId() {
+    void snapshotsExposeSensorId() {
         assign("living-room", "air-1");
-        assign("living-room", "air-legacy");
-        insertEnvironmentRaw("living-room", null, "air-legacy", "2026-10-03T09:00:00Z");
-        insertEnvironmentRaw("living-room", "air-1", "stale-device", "2026-10-03T09:00:00Z");
+        assign("living-room", "air-2");
+        insertEnvironment("living-room", "air-1", "AIR", 700.0, "2026-10-03T09:00:00Z");
+        insertEnvironment("living-room", "air-2", "AIR", 800.0, "2026-10-03T09:00:00Z");
 
         assertThat(repository.latestEnvironment(SensorType.AIR))
                 .extracting(AlertRepository.EnvironmentSnapshot::sensorId)
-                .containsExactlyInAnyOrder("air-1", "air-legacy");
+                .containsExactlyInAnyOrder("air-1", "air-2");
     }
 
     @Test
     void unassignedSensorReadingsAreExcluded() {
         assign(null, "air-1");
         insertEnvironment("living-room", "air-1", "AIR", 1600.0, "2026-10-03T09:00:00Z");
-        insertEnvironmentRaw(null, "air-1", null, "2026-10-03T10:00:00Z");
+        insertEnvironment(null, "air-1", "AIR", 500.0, "2026-10-03T10:00:00Z");
         insertOccupancy("kitchen", "window-1", true, "2026-10-03T09:00:00Z");
 
         assertThat(repository.latestEnvironment(SensorType.AIR)).isEmpty();
@@ -167,6 +167,95 @@ class AlertRepositoryTest {
     }
 
     @Test
+    void findAlertsOrdersByTriggeredAtThenIdDescending() {
+        long oldest = insertAlert("r1", "room-a", "air-1", "WARNING", "RESOLVED", "2026-10-03T08:00:00Z");
+        long tieFirst = insertAlert("r2", "room-a", "air-1", "WARNING", "ACTIVE", "2026-10-03T09:00:00Z");
+        long tieSecond = insertAlert("r3", "room-a", "air-1", "WARNING", "ACTIVE", "2026-10-03T09:00:00Z");
+
+        var page = repository.findAlerts(null, null, null, null, null, null, 100, 0);
+
+        assertThat(page.items()).extracting(Alert::id).containsExactly(tieSecond, tieFirst, oldest);
+        assertThat(page.hasMore()).isFalse();
+    }
+
+    @Test
+    void findAlertsAppliesEveryFilter() {
+        insertAlert("r1", "room-a", "air-1", "WARNING", "ACTIVE", "2026-10-03T08:00:00Z");
+        long target = insertAlert("r2", "room-b", "air-2", "CRITICAL", "ACTIVE", "2026-10-03T10:00:00Z");
+        insertAlert("r3", "room-b", "air-2", "CRITICAL", "RESOLVED", "2026-10-03T10:00:00Z");
+        insertAlert("r4", "room-b", "air-3", "CRITICAL", "ACTIVE", "2026-10-03T10:00:00Z");
+        insertAlert("r5", "room-b", "air-2", "INFO", "ACTIVE", "2026-10-03T10:00:00Z");
+        insertAlert("r6", "room-b", "air-2", "CRITICAL", "ACTIVE", "2026-10-03T12:00:00Z");
+
+        assertThat(repository.findAlerts(
+                AlertStatus.ACTIVE, "room-b", "air-2", AlertConfiguration.Severity.CRITICAL,
+                Instant.parse("2026-10-03T09:00:00Z"), Instant.parse("2026-10-03T11:00:00Z"), 100, 0).items())
+                .extracting(Alert::id).containsExactly(target);
+
+        assertThat(repository.findAlerts(AlertStatus.RESOLVED, null, null, null, null, null, 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r3");
+        assertThat(repository.findAlerts(null, "room-a", null, null, null, null, 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r1");
+        assertThat(repository.findAlerts(null, null, "air-3", null, null, null, 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r4");
+        assertThat(repository.findAlerts(null, null, null, AlertConfiguration.Severity.INFO, null, null, 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r5");
+        assertThat(repository.findAlerts(
+                null, null, null, null, Instant.parse("2026-10-03T11:00:00Z"), null, 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r6");
+        assertThat(repository.findAlerts(
+                null, null, null, null, null, Instant.parse("2026-10-03T08:00:00Z"), 100, 0).items())
+                .extracting(Alert::ruleId).containsExactly("r1");
+    }
+
+    @Test
+    void findAlertsPaginatesWithHasMore() {
+        for (int i = 0; i < 5; i++) {
+            insertAlert("r" + i, "room-a", "air-1", "WARNING", "ACTIVE", "2026-10-03T0" + i + ":00:00Z");
+        }
+
+        var first = repository.findAlerts(null, null, null, null, null, null, 2, 0);
+        var second = repository.findAlerts(null, null, null, null, null, null, 2, 2);
+        var last = repository.findAlerts(null, null, null, null, null, null, 2, 4);
+
+        assertThat(first.items()).extracting(Alert::ruleId).containsExactly("r4", "r3");
+        assertThat(first.hasMore()).isTrue();
+        assertThat(first.limit()).isEqualTo(2);
+        assertThat(second.items()).extracting(Alert::ruleId).containsExactly("r2", "r1");
+        assertThat(second.hasMore()).isTrue();
+        assertThat(second.offset()).isEqualTo(2);
+        assertThat(last.items()).extracting(Alert::ruleId).containsExactly("r0");
+        assertThat(last.hasMore()).isFalse();
+    }
+
+    @Test
+    void compositeAlertsExposeNullSensorIdAndResolvedAt() {
+        long composite = insertAlert("composite", "room-a", null, "WARNING", "ACTIVE", "2026-10-03T08:00:00Z");
+
+        Alert alert = repository.findAlerts(null, null, null, null, null, null, 100, 0).items().getFirst();
+
+        assertThat(alert.id()).isEqualTo(composite);
+        assertThat(alert.sensorId()).isNull();
+        assertThat(alert.resolvedAt()).isNull();
+        assertThat(alert.status()).isEqualTo(AlertStatus.ACTIVE);
+        assertThat(alert.severity()).isEqualTo(AlertConfiguration.Severity.WARNING);
+        assertThat(alert.triggeredAt()).isEqualTo(Instant.parse("2026-10-03T08:00:00Z"));
+    }
+
+    @Test
+    void findAlertByIdIncludesRuleSnapshotAndReturnsEmptyWhenMissing() {
+        long id = insertAlert("high-co2", "room-a", "air-1", "WARNING", "RESOLVED", "2026-10-03T08:00:00Z");
+
+        AlertDetail detail = repository.findAlertById(id).orElseThrow();
+
+        assertThat(detail.ruleId()).isEqualTo("high-co2");
+        assertThat(detail.sensorId()).isEqualTo("air-1");
+        assertThat(detail.resolvedAt()).isEqualTo(Instant.parse("2026-10-03T08:30:00Z"));
+        assertThat(detail.ruleSnapshot()).isEqualTo("{\"id\":\"high-co2\",\"threshold\":1500}");
+        assertThat(repository.findAlertById(id + 1000)).isEmpty();
+    }
+
+    @Test
     void readinessIncludesAlertTables() {
         assertThat(repository.isReady()).isTrue();
     }
@@ -188,35 +277,38 @@ class AlertRepositoryTest {
         Instant now = Instant.parse("2026-10-03T09:00:00Z");
         jdbc.update("""
                 INSERT INTO home_api.alert (
-                  rule_id, room_id, device_id, severity, status, message, triggered_at,
+                  rule_id, room_id, sensor_id, severity, status, message, triggered_at,
                   last_evaluated_at, rule_snapshot
                 ) VALUES (?, ?, ?, 'WARNING', 'ACTIVE', 'm', ?, ?, '{}')
                 """, ruleId, roomId, sensorId, Timestamp.from(now), Timestamp.from(now));
     }
 
+    private long insertAlert(
+            String ruleId,
+            String roomId,
+            String sensorId,
+            String severity,
+            String status,
+            String triggeredAt) {
+        Instant triggered = Instant.parse(triggeredAt);
+        Timestamp resolved = "RESOLVED".equals(status) ? Timestamp.from(triggered.plusSeconds(1800)) : null;
+        jdbc.update("""
+                INSERT INTO home_api.alert (
+                  rule_id, room_id, sensor_id, severity, status, message, trigger_value,
+                  triggered_at, resolved_at, last_evaluated_at, rule_snapshot
+                ) VALUES (?, ?, ?, ?, ?, 'm', '1600', ?, ?, ?, ? FORMAT JSON)
+                """,
+                ruleId, roomId, sensorId, severity, status, Timestamp.from(triggered), resolved,
+                Timestamp.from(triggered.plusSeconds(60)),
+                "{\"id\":\"" + ruleId + "\",\"threshold\":1500}");
+        return jdbc.queryForObject("SELECT MAX(id) FROM home_api.alert WHERE rule_id = ?", Long.class, ruleId);
+    }
+
     private String statusOf(String ruleId, String roomId, String sensorId) {
         return jdbc.queryForObject("""
                 SELECT status FROM home_api.alert
-                WHERE rule_id = ? AND room_id = ? AND COALESCE(device_id, '') = ?
+                WHERE rule_id = ? AND room_id = ? AND COALESCE(sensor_id, '') = ?
                 """, String.class, ruleId, roomId, sensorId == null ? "" : sensorId);
-    }
-
-    private void insertEnvironmentRaw(
-            String roomId,
-            String sensorId,
-            String deviceId,
-            String observedAt) {
-        Instant observed = Instant.parse(observedAt);
-        jdbc.update("""
-                        INSERT INTO environment.environment_reading (
-                          room_id, sensor_id, device_id, sensor_type, co2, observed_at, received_at
-                        ) VALUES (?, ?, ?, 'AIR', 500, ?, ?)
-                        """,
-                roomId,
-                sensorId,
-                deviceId,
-                Timestamp.from(observed),
-                Timestamp.from(observed));
     }
 
     private void insertEnvironment(

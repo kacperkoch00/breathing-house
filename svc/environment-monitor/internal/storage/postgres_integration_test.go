@@ -65,15 +65,15 @@ func TestInsertReadingAgainstPostgres(t *testing.T) {
 			t.Fatalf("InsertReading(%d) error = %v", offset, err)
 		}
 	}
-	readingRoom := func(offset int64) (room, device, sensor *string) {
+	readingRoom := func(offset int64) (room, sensor *string) {
 		t.Helper()
 		err := pool.pool.QueryRow(ctx,
-			`SELECT room_id, device_id, sensor_id FROM environment.environment_reading WHERE kafka_topic = $1 AND kafka_offset = $2`,
-			topic, offset).Scan(&room, &device, &sensor)
+			`SELECT room_id, sensor_id FROM environment.environment_reading WHERE kafka_topic = $1 AND kafka_offset = $2`,
+			topic, offset).Scan(&room, &sensor)
 		if err != nil {
 			t.Fatalf("select reading %d: %v", offset, err)
 		}
-		return room, device, sensor
+		return room, sensor
 	}
 
 	insert(1)
@@ -85,8 +85,8 @@ func TestInsertReadingAgainstPostgres(t *testing.T) {
 	if displayName != sensorID || sensorRoom != nil {
 		t.Fatalf("sensor = %q/%v, want auto-registered unassigned %q", displayName, sensorRoom, sensorID)
 	}
-	if room, device, sensor := readingRoom(1); room != nil || device == nil || *device != sensorID || sensor == nil || *sensor != sensorID {
-		t.Fatalf("reading 1 room/device/sensor = %v/%v/%v", room, device, sensor)
+	if room, sensor := readingRoom(1); room != nil || sensor == nil || *sensor != sensorID {
+		t.Fatalf("reading 1 room/sensor = %v/%v", room, sensor)
 	}
 
 	for _, id := range []string{roomID, otherRoomID} {
@@ -112,13 +112,13 @@ func TestInsertReadingAgainstPostgres(t *testing.T) {
 		t.Fatalf("display_name = %q, want Edited", displayName)
 	}
 
-	if room, _, _ := readingRoom(1); room != nil {
+	if room, _ := readingRoom(1); room != nil {
 		t.Fatalf("reading 1 room = %q, want NULL", *room)
 	}
-	if room, _, _ := readingRoom(2); room == nil || *room != roomID {
+	if room, _ := readingRoom(2); room == nil || *room != roomID {
 		t.Fatalf("reading 2 room = %v, want %s", room, roomID)
 	}
-	if room, _, _ := readingRoom(3); room == nil || *room != otherRoomID {
+	if room, _ := readingRoom(3); room == nil || *room != otherRoomID {
 		t.Fatalf("reading 3 room = %v, want %s", room, otherRoomID)
 	}
 

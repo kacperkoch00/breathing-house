@@ -85,7 +85,7 @@ func TestPostgresInsertEventSensorRoomSnapshots(t *testing.T) {
 		t.Fatalf("display_name = %q, want Kitchen motion", displayName)
 	}
 
-	rows, err := raw.Query(ctx, `SELECT kafka_offset, room_id, device_id, sensor_id FROM occupancy.occupancy_event WHERE kafka_topic = 'it-topic' ORDER BY kafka_offset`)
+	rows, err := raw.Query(ctx, `SELECT kafka_offset, room_id, sensor_id FROM occupancy.occupancy_event WHERE kafka_topic = 'it-topic' ORDER BY kafka_offset`)
 	if err != nil {
 		t.Fatalf("select events: %v", err)
 	}
@@ -94,13 +94,12 @@ func TestPostgresInsertEventSensorRoomSnapshots(t *testing.T) {
 	type snapshot struct {
 		offset   int64
 		roomID   *string
-		deviceID *string
 		sensorID *string
 	}
 	var got []snapshot
 	for rows.Next() {
 		var s snapshot
-		if err := rows.Scan(&s.offset, &s.roomID, &s.deviceID, &s.sensorID); err != nil {
+		if err := rows.Scan(&s.offset, &s.roomID, &s.sensorID); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		got = append(got, s)
@@ -112,7 +111,6 @@ func TestPostgresInsertEventSensorRoomSnapshots(t *testing.T) {
 	}
 	for i, s := range got {
 		requireStringPtr(t, "room_id", s.roomID, want[i])
-		requireStringPtr(t, "device_id", s.deviceID, str(sensorID))
 		requireStringPtr(t, "sensor_id", s.sensorID, str(sensorID))
 	}
 }

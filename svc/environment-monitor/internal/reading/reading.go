@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	SchemaVersionV1 = 1
 	SchemaVersionV2 = 2
 	SensorTypeRoom  = "ROOM"
 	SensorTypeAir   = "AIR"
@@ -20,9 +19,8 @@ const (
 
 // Reading is the internal model persisted to environment.environment_reading.
 //
-// SensorID is the stable sensor identity. RoomID is a nullable snapshot: for
-// schema v1 it is the envelope's legacy roomId; for schema v2 it is nil at
-// decode time and resolved from home_api.sensor when the reading is persisted.
+// SensorID is the required stable sensor identity. RoomID is nil at decode time
+// and resolved from home_api.sensor when the reading is persisted.
 type Reading struct {
 	SensorID       *string
 	RoomID         *string
@@ -63,13 +61,14 @@ type airValues struct {
 }
 
 // Decode validates a Kafka payload and maps it to a Reading with Kafka metadata.
+// Only schemaVersion 2 is accepted.
 func Decode(payload []byte, topic string, partition int32, offset int64) (Reading, error) {
 	var env envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return Reading{}, fmt.Errorf("decode envelope: %w", err)
 	}
 
-	ids, err := decodeIdentity(env)
+	sensorID, err := decodeIdentity(env)
 	if err != nil {
 		return Reading{}, err
 	}
@@ -89,8 +88,7 @@ func Decode(payload []byte, topic string, partition int32, offset int64) (Readin
 	}
 
 	reading := Reading{
-		SensorID:       ids.sensorID,
-		RoomID:         ids.roomID,
+		SensorID:       sensorID,
 		SensorType:     env.Type,
 		ObservedAt:     observedAt,
 		ReceivedAt:     receivedAt,
@@ -113,40 +111,24 @@ func Decode(payload []byte, topic string, partition int32, offset int64) (Readin
 	return reading, nil
 }
 
-type identities struct {
-	sensorID *string
-	roomID   *string
-}
-
-func decodeIdentity(env envelope) (identities, error) {
-	switch env.SchemaVersion {
-	case SchemaVersionV1:
-		if env.RoomID == nil || strings.TrimSpace(*env.RoomID) == "" {
-			return identities{}, fmt.Errorf("roomId: required")
-		}
-		roomID := strings.TrimSpace(*env.RoomID)
-		return identities{
-			sensorID: normalizeOptionalString(env.DeviceID),
-			roomID:   &roomID,
-		}, nil
-	case SchemaVersionV2:
-		if env.RoomID != nil {
-			return identities{}, fmt.Errorf("roomId: not allowed in schemaVersion %d", SchemaVersionV2)
-		}
-		if env.DeviceID != nil {
-			return identities{}, fmt.Errorf("deviceId: not allowed in schemaVersion %d", SchemaVersionV2)
-		}
-		sensorID := normalizeOptionalString(env.SensorID)
-		if sensorID == nil {
-			return identities{}, fmt.Errorf("sensorId: required")
-		}
-		if utf8.RuneCountInString(*sensorID) > MaxSensorIDLength {
-			return identities{}, fmt.Errorf("sensorId: longer than %d characters", MaxSensorIDLength)
-		}
-		return identities{sensorID: sensorID}, nil
-	default:
-		return identities{}, fmt.Errorf("schemaVersion: want %d or %d, got %d", SchemaVersionV1, SchemaVersionV2, env.SchemaVersion)
+func decodeIdentity(env envelope) (*string, error) {
+	if env.SchemaVersion != SchemaVersionV2 {
+		return nil, fmt.Errorf("schemaVersion: want %d, got %d", SchemaVersionV2, env.SchemaVersion)
 	}
+	if env.RoomID != nil {
+		return nil, fmt.Errorf("roomId: not allowed in schemaVersion %d", SchemaVersionV2)
+	}
+	if env.DeviceID != nil {
+		return nil, fmt.Errorf("deviceId: not allowed in schemaVersion %d", SchemaVersionV2)
+	}
+	sensorID := normalizeOptionalString(env.SensorID)
+	if sensorID == nil {
+		return nil, fmt.Errorf("sensorId: required")
+	}
+	if utf8.RuneCountInString(*sensorID) > MaxSensorIDLength {
+		return nil, fmt.Errorf("sensorId: longer than %d characters", MaxSensorIDLength)
+	}
+	return sensorID, nil
 }
 
 func decodeRoomValues(raw json.RawMessage, reading *Reading) error {

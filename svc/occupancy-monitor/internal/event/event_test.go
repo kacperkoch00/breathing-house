@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-func strPtr(value string) *string { return &value }
-
 func requireString(t *testing.T, field string, got *string, want string) {
 	t.Helper()
 	if got == nil || *got != want {
@@ -23,11 +21,10 @@ func requireNilString(t *testing.T, field string, got *string) {
 	}
 }
 
-func TestDecodeV1PRESENCE(t *testing.T) {
+func TestDecodePRESENCE(t *testing.T) {
 	payload := []byte(`{
-		"schemaVersion": 1,
-		"roomId": "kitchen",
-		"deviceId": "presence-1",
+		"schemaVersion": 2,
+		"sensorId": "presence-1",
 		"type": "PRESENCE",
 		"observedAt": "2026-10-03T08:00:00Z",
 		"receivedAt": "2026-10-03T08:00:01Z",
@@ -39,11 +36,11 @@ func TestDecodeV1PRESENCE(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	if got.SchemaVersion != 1 {
-		t.Fatalf("SchemaVersion = %d, want 1", got.SchemaVersion)
+	if got.SchemaVersion != 2 {
+		t.Fatalf("SchemaVersion = %d, want 2", got.SchemaVersion)
 	}
-	requireString(t, "RoomID", got.RoomID, "kitchen")
 	requireString(t, "SensorID", got.SensorID, "presence-1")
+	requireNilString(t, "RoomID", got.RoomID)
 	if got.EventType != EventTypePresence {
 		t.Fatalf("EventType = %q, want PRESENCE", got.EventType)
 	}
@@ -61,10 +58,10 @@ func TestDecodeV1PRESENCE(t *testing.T) {
 	}
 }
 
-func TestDecodeV1OPENINGWithoutDeviceIDHasNoSensor(t *testing.T) {
+func TestDecodeOPENING(t *testing.T) {
 	payload := []byte(`{
-		"schemaVersion": 1,
-		"roomId": "hallway",
+		"schemaVersion": 2,
+		"sensorId": "door-1",
 		"type": "OPENING",
 		"observedAt": "2026-10-03T08:00:00Z",
 		"receivedAt": "2026-10-03T08:00:01Z",
@@ -79,46 +76,13 @@ func TestDecodeV1OPENINGWithoutDeviceIDHasNoSensor(t *testing.T) {
 	if got.EventType != EventTypeOpening {
 		t.Fatalf("EventType = %q, want OPENING", got.EventType)
 	}
-	requireString(t, "RoomID", got.RoomID, "hallway")
-	requireNilString(t, "SensorID", got.SensorID)
+	requireString(t, "SensorID", got.SensorID, "door-1")
+	requireNilString(t, "RoomID", got.RoomID)
 	if got.Open == nil || *got.Open {
 		t.Fatalf("Open = %v, want false", got.Open)
 	}
 	if got.Present != nil {
 		t.Fatalf("Present = %v, want nil", got.Present)
-	}
-}
-
-func TestDecodeV1TrimsDeviceIDAndTreatsBlankAsAbsent(t *testing.T) {
-	tests := []struct {
-		name     string
-		deviceID string
-		want     *string
-	}{
-		{name: "padded", deviceID: `"  presence-1 "`, want: strPtr("presence-1")},
-		{name: "blank", deviceID: `"   "`, want: nil},
-		{name: "null", deviceID: `null`, want: nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload := fmt.Sprintf(
-				`{"schemaVersion":1,"roomId":" kitchen ","deviceId":%s,"type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
-				tt.deviceID,
-			)
-
-			got, err := Decode([]byte(payload), "event-data", 0, 0)
-			if err != nil {
-				t.Fatalf("Decode() error = %v", err)
-			}
-
-			requireString(t, "RoomID", got.RoomID, "kitchen")
-			if tt.want == nil {
-				requireNilString(t, "SensorID", got.SensorID)
-				return
-			}
-			requireString(t, "SensorID", got.SensorID, *tt.want)
-		})
 	}
 }
 
@@ -213,51 +177,47 @@ func TestDecodeValidationErrors(t *testing.T) {
 	}{
 		{name: "bad json", payload: `{`},
 		{
+			name:    "schemaVersion 1 rejected",
+			payload: `{"schemaVersion":1,"roomId":"r","deviceId":"d","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
+		},
+		{
 			name:    "unsupported schema",
 			payload: `{"schemaVersion":3,"sensorId":"s","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 		{
 			name:    "missing schema",
-			payload: `{"roomId":"r","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
+			payload: `{"sensorId":"s","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 		{
-			name:    "v1 blank room",
-			payload: `{"schemaVersion":1,"roomId":" ","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
-		},
-		{
-			name:    "v1 unsupported type",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
-		},
-		{
-			name:    "v1 presence missing present",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
-		},
-		{
-			name:    "v1 opening missing open",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"OPENING","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
-		},
-		{
-			name:    "v2 missing sensorId",
+			name:    "missing sensorId",
 			payload: `{"schemaVersion":2,"type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 		{
-			name:    "v2 blank sensorId",
+			name:    "blank sensorId",
 			payload: `{"schemaVersion":2,"sensorId":"  ","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 		{
-			name:    "v2 only legacy roomId and deviceId",
-			payload: `{"schemaVersion":2,"roomId":"r","deviceId":"d","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
+			name:    "roomId rejected",
+			payload: `{"schemaVersion":2,"sensorId":"s","roomId":"r","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 		{
-			name:    "v2 unsupported type",
+			name:    "deviceId rejected",
+			payload: `{"schemaVersion":2,"sensorId":"s","deviceId":"d","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
+		},
+		{
+			name:    "unsupported type",
 			payload: `{"schemaVersion":2,"sensorId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
 		},
 		{
-			name:    "v2 presence missing present",
+			name:    "presence missing present",
 			payload: `{"schemaVersion":2,"sensorId":"s","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
 		},
 		{
-			name:    "v2 invalid observedAt",
+			name:    "opening missing open",
+			payload: `{"schemaVersion":2,"sensorId":"s","type":"OPENING","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
+		},
+		{
+			name:    "invalid observedAt",
 			payload: `{"schemaVersion":2,"sensorId":"s","type":"PRESENCE","observedAt":"yesterday","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`,
 		},
 	}

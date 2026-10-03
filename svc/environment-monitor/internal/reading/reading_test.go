@@ -8,9 +8,8 @@ import (
 
 func TestDecodeAIR(t *testing.T) {
 	payload := []byte(`{
-		"schemaVersion": 1,
-		"roomId": "living-room",
-		"deviceId": "sensor-1",
+		"schemaVersion": 2,
+		"sensorId": "sensor-1",
 		"type": "AIR",
 		"observedAt": "2026-10-03T08:00:00Z",
 		"receivedAt": "2026-10-03T08:00:01Z",
@@ -26,8 +25,10 @@ func TestDecodeAIR(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	assertString(t, "RoomID", got.RoomID, "living-room")
 	assertString(t, "SensorID", got.SensorID, "sensor-1")
+	if got.RoomID != nil {
+		t.Fatalf("RoomID = %v, want nil (resolved at persist time)", *got.RoomID)
+	}
 	if got.SensorType != SensorTypeAir {
 		t.Fatalf("SensorType = %q, want AIR", got.SensorType)
 	}
@@ -56,8 +57,8 @@ func TestDecodeAIR(t *testing.T) {
 
 func TestDecodeROOM(t *testing.T) {
 	payload := []byte(`{
-		"schemaVersion": 1,
-		"roomId": "kitchen",
+		"schemaVersion": 2,
+		"sensorId": "room-sensor",
 		"type": "ROOM",
 		"observedAt": "2026-10-03T08:00:00Z",
 		"receivedAt": "2026-10-03T08:00:01Z",
@@ -76,9 +77,9 @@ func TestDecodeROOM(t *testing.T) {
 	if got.SensorType != SensorTypeRoom {
 		t.Fatalf("SensorType = %q, want ROOM", got.SensorType)
 	}
-	assertString(t, "RoomID", got.RoomID, "kitchen")
-	if got.SensorID != nil {
-		t.Fatalf("SensorID = %v, want nil", got.SensorID)
+	assertString(t, "SensorID", got.SensorID, "room-sensor")
+	if got.RoomID != nil {
+		t.Fatalf("RoomID = %v, want nil (resolved at persist time)", *got.RoomID)
 	}
 	if got.Temperature == nil || *got.Temperature != 21 {
 		t.Fatalf("Temperature = %v, want 21", got.Temperature)
@@ -92,32 +93,6 @@ func TestDecodeROOM(t *testing.T) {
 	if got.Humidity != nil || got.CO2 != nil {
 		t.Fatalf("ROOM humidity/co2 must be nil, got humidity=%v co2=%v", got.Humidity, got.CO2)
 	}
-}
-
-func TestDecodeV1TrimsDeviceIDAndRoomID(t *testing.T) {
-	payload := []byte(`{"schemaVersion":1,"roomId":" kitchen ","deviceId":"  sensor-1 ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":2,"co2":3}}`)
-
-	got, err := Decode(payload, "sensor-data", 0, 1)
-	if err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-
-	assertString(t, "SensorID", got.SensorID, "sensor-1")
-	assertString(t, "RoomID", got.RoomID, "kitchen")
-}
-
-func TestDecodeV1BlankDeviceIDMeansNoSensor(t *testing.T) {
-	payload := []byte(`{"schemaVersion":1,"roomId":"kitchen","deviceId":"   ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":2,"co2":3}}`)
-
-	got, err := Decode(payload, "sensor-data", 0, 1)
-	if err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-
-	if got.SensorID != nil {
-		t.Fatalf("SensorID = %v, want nil", got.SensorID)
-	}
-	assertString(t, "RoomID", got.RoomID, "kitchen")
 }
 
 func TestDecodeV2AIR(t *testing.T) {
@@ -193,56 +168,48 @@ func TestDecodeValidationErrors(t *testing.T) {
 			payload: `{`,
 		},
 		{
+			name:    "schemaVersion 1 rejected",
+			payload: `{"schemaVersion":1,"roomId":"r","deviceId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
 			name:    "unsupported schema",
 			payload: `{"schemaVersion":3,"sensorId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v1 missing room",
-			payload: `{"schemaVersion":1,"deviceId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
-		},
-		{
-			name:    "v2 missing sensorId",
+			name:    "missing sensorId",
 			payload: `{"schemaVersion":2,"type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v2 blank sensorId",
+			name:    "blank sensorId",
 			payload: `{"schemaVersion":2,"sensorId":"  ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v2 sensorId too long",
+			name:    "sensorId too long",
 			payload: `{"schemaVersion":2,"sensorId":"` + strings.Repeat("a", MaxSensorIDLength+1) + `","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v2 with roomId",
+			name:    "roomId rejected",
 			payload: `{"schemaVersion":2,"sensorId":"s","roomId":"kitchen","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v2 with deviceId",
+			name:    "deviceId rejected",
 			payload: `{"schemaVersion":2,"sensorId":"s","deviceId":"d","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
-			name:    "v2 unsupported type",
+			name:    "unsupported type",
 			payload: `{"schemaVersion":2,"sensorId":"s","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
 		},
 		{
-			name:    "blank room",
-			payload: `{"schemaVersion":1,"roomId":" ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
-		},
-		{
-			name:    "unsupported type",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
-		},
-		{
 			name:    "missing observedAt",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"AIR","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+			payload: `{"schemaVersion":2,"sensorId":"s","type":"AIR","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
 		},
 		{
 			name:    "air missing humidity",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"co2":1}}`,
+			payload: `{"schemaVersion":2,"sensorId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"co2":1}}`,
 		},
 		{
 			name:    "room blank lightLevel",
-			payload: `{"schemaVersion":1,"roomId":"r","type":"ROOM","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"light":1,"lightLevel":" "}}`,
+			payload: `{"schemaVersion":2,"sensorId":"s","type":"ROOM","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"light":1,"lightLevel":" "}}`,
 		},
 	}
 

@@ -21,13 +21,15 @@ info:
     PATCH /rooms/{roomId} takes name/description instead of displayName;
     history items expose sensorId instead of deviceId; sensors and room
     assignment endpoints were added. The service evaluates configurable alert
-    rules internally (alert APIs are not implemented yet) and reports whether
+    rules internally, exposes the resulting alerts through a read-only API
+    (no write, acknowledge, or notification endpoints), and reports whether
     the sensor gateway is online from Kafka STATUS heartbeats.
 
 tags:
   - name: Rooms
   - name: Sensors
   - name: History
+  - name: Alerts
 
 paths:
   /live:
@@ -380,6 +382,82 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/alerts:
+    get:
+      operationId: listAlerts
+      tags: [Alerts]
+      summary: List paginated alerts
+      description: >
+        Read-only list of persisted alerts, newest first (triggeredAt DESC,
+        id DESC). All filters are optional and combined with AND. The rule
+        snapshot is only returned by the single-alert endpoint.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AlertStatus'
+        - name: roomId
+          in: query
+          schema:
+            type: string
+        - name: sensorId
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            $ref: '#/components/schemas/AlertSeverity'
+        - name: from
+          in: query
+          description: Inclusive lower bound on triggeredAt (RFC3339); must not be after to
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Inclusive upper bound on triggeredAt (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/alerts/{id}:
+    get:
+      operationId: getAlert
+      tags: [Alerts]
+      summary: Get one alert including its rule snapshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: The alert
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
 
 components:
   responses:
@@ -390,7 +468,7 @@ components:
           schema:
             $ref: '#/components/schemas/ApiError'
     NotFound:
-      description: Room or sensor not found
+      description: Room, sensor, or alert not found
       content:
         application/json:
           schema:
@@ -457,6 +535,12 @@ components:
     EventType:
       type: string
       enum: [PRESENCE, OPENING]
+    AlertStatus:
+      type: string
+      enum: [ACTIVE, RESOLVED]
+    AlertSeverity:
+      type: string
+      enum: [INFO, WARNING, CRITICAL]
     Room:
       type: object
       required: [roomId, name, description, sensorIds]
@@ -666,6 +750,72 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/OccupancyEvent'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+    Alert:
+      type: object
+      required:
+        - id
+        - ruleId
+        - roomId
+        - severity
+        - status
+        - message
+        - triggeredAt
+        - lastEvaluatedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        ruleId:
+          type: string
+        roomId:
+          type: string
+        sensorId:
+          type: string
+          nullable: true
+          description: Sensor that raised the alert; null for composite (room-level) alerts
+        severity:
+          $ref: '#/components/schemas/AlertSeverity'
+        status:
+          $ref: '#/components/schemas/AlertStatus'
+        message:
+          type: string
+        triggerValue:
+          type: string
+          nullable: true
+        triggeredAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastEvaluatedAt:
+          type: string
+          format: date-time
+    AlertDetail:
+      allOf:
+        - $ref: '#/components/schemas/Alert'
+        - type: object
+          required: [ruleSnapshot]
+          properties:
+            ruleSnapshot:
+              type: object
+              additionalProperties: true
+              description: Rule definition captured when the alert was raised
+    AlertPage:
+      type: object
+      required: [items, limit, offset, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
         limit:
           type: integer
         offset:

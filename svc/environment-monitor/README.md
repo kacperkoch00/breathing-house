@@ -6,38 +6,31 @@ PostgreSQL table `environment.environment_reading`. Offsets are committed only
 after a successful persist (or idempotent conflict ignore). `/live` is always up
 when the process is running. `/ready` requires Kafka and database connectivity.
 
-## Message schemas
+## Message schema
 
-The consumer accepts both envelope versions on `sensor-data`:
+Only `schemaVersion: 2` is accepted on `sensor-data`. Legacy fields `roomId` and
+`deviceId` are rejected. `sensorId` is required (trimmed, non-blank, max 200
+characters). `type` must be `ROOM` or `AIR`; `observedAt`, `receivedAt`, and
+`values` follow the type-specific shape.
 
-| Field | `schemaVersion: 1` (legacy) | `schemaVersion: 2` |
-| :---- | :-------------------------- | :----------------- |
-| `roomId` | Required; stored as the reading's room snapshot | Rejected if present |
-| `deviceId` | Optional; trimmed value becomes the `sensorId` | Rejected if present |
-| `sensorId` | Not read | Required, trimmed, non-blank, max 200 characters |
-| `type`, `observedAt`, `receivedAt`, `values` | Unchanged | Unchanged |
-
-A v1 record without a (non-blank) `deviceId` has no sensor identity: it is stored
-with the envelope `roomId` and a null `sensor_id`. Records that fail validation
-are logged, skipped and their offset is committed.
+Records that fail validation (including `schemaVersion: 1`) are logged, skipped,
+and their offset is committed.
 
 ## Sensor registration and room snapshot
 
 Each valid record is persisted in one database transaction:
 
-1. When the record has a `sensorId`, insert it into `home_api.sensor` with
+1. Insert the `sensorId` into `home_api.sensor` with
    `display_name = sensorId` (truncated to the column's 100-character limit)
    using `ON CONFLICT DO NOTHING`. An existing sensor, including an edited
    display name or room assignment, is never modified.
 2. Read the sensor's current `room_id` from `home_api.sensor`.
-3. Insert into `environment.environment_reading` with `sensor_id`, the room
-   snapshot, and `sensorId` copied into the deprecated `device_id` column.
+3. Insert into `environment.environment_reading` with `sensor_id` and that room
+   snapshot. The deprecated `device_id` column is not written.
    Duplicate `(kafka_topic, kafka_partition, kafka_offset)` rows are ignored.
 
 The room snapshot is the sensor's room at persist time (`NULL` when the sensor is
-unassigned), so moving a sensor only affects later readings. Schema-v1 records
-keep the room from the envelope instead; the sensor is still registered when a
-`deviceId` is present, but its assignment is not used for that record.
+unassigned), so moving a sensor only affects later readings.
 
 If any step fails the transaction is rolled back, the offset is not committed
 and the same record is retried.
@@ -48,8 +41,8 @@ The service requires `home_api.room` / `home_api.sensor` and the nullable
 `environment_reading.sensor_id` / `room_id` columns:
 
 1. Deploy `home-api` first (Flyway migration `V4__sensor_room_domain.sql`).
-2. Deploy `environment-monitor` (accepts v1 and v2).
-3. Deploy `sensors-data-collector` last, so it only starts emitting v2 after
+2. Deploy `environment-monitor` (schema v2 only).
+3. Deploy `sensors-data-collector` last, so producers emit v2 only after
    consumers understand it.
 
 ## Local development

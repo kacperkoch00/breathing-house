@@ -18,9 +18,8 @@ import (
 )
 
 const validAIRPayload = `{
-	"schemaVersion": 1,
-	"roomId": "kitchen",
-	"deviceId": "sensor-1",
+	"schemaVersion": 2,
+	"sensorId": "sensor-1",
 	"type": "AIR",
 	"observedAt": "2026-10-03T08:00:00Z",
 	"receivedAt": "2026-10-03T08:00:01Z",
@@ -34,15 +33,6 @@ const validV2AIRPayload = `{
 	"observedAt": "2026-10-03T08:00:00Z",
 	"receivedAt": "2026-10-03T08:00:01Z",
 	"values": {"temperature": 22.5, "humidity": 45, "co2": 700}
-}`
-
-const validV1RoomPayloadWithoutDevice = `{
-	"schemaVersion": 1,
-	"roomId": "kitchen",
-	"type": "ROOM",
-	"observedAt": "2026-10-03T08:00:00Z",
-	"receivedAt": "2026-10-03T08:00:01Z",
-	"values": {"temperature": 21, "light": 120, "lightLevel": "NORMAL"}
 }`
 
 func newTestKafkaMetrics() *metrics.Kafka {
@@ -277,31 +267,26 @@ func processWithPayloads(t *testing.T, store readingStore, client kafkaClient, p
 	)
 }
 
-func TestProcessFetchesPassesSchemaVersionsToStore(t *testing.T) {
+func TestProcessFetchesPassesV2ToStore(t *testing.T) {
 	store := &mockStore{}
 
-	if !processWithPayloads(t, store, &mockKafkaClient{}, validAIRPayload, validV2AIRPayload, validV1RoomPayloadWithoutDevice) {
+	if !processWithPayloads(t, store, &mockKafkaClient{}, validAIRPayload, validV2AIRPayload) {
 		t.Fatal("processFetches() = false, want true")
 	}
 
 	got := store.readings()
-	if len(got) != 3 {
-		t.Fatalf("inserts = %d, want 3", len(got))
+	if len(got) != 2 {
+		t.Fatalf("inserts = %d, want 2", len(got))
 	}
 
-	v1 := got[0]
-	if v1.SensorID == nil || *v1.SensorID != "sensor-1" || v1.RoomID == nil || *v1.RoomID != "kitchen" {
-		t.Fatalf("v1 sensor/room = %v/%v, want sensor-1/kitchen", v1.SensorID, v1.RoomID)
+	first := got[0]
+	if first.SensorID == nil || *first.SensorID != "sensor-1" || first.RoomID != nil {
+		t.Fatalf("first sensor/room = %v/%v, want sensor-1/nil", first.SensorID, first.RoomID)
 	}
 
-	v2 := got[1]
-	if v2.SensorID == nil || *v2.SensorID != "sensor-2" || v2.RoomID != nil {
-		t.Fatalf("v2 sensor/room = %v/%v, want sensor-2/nil", v2.SensorID, v2.RoomID)
-	}
-
-	legacy := got[2]
-	if legacy.SensorID != nil || legacy.RoomID == nil || *legacy.RoomID != "kitchen" {
-		t.Fatalf("v1 without device sensor/room = %v/%v, want nil/kitchen", legacy.SensorID, legacy.RoomID)
+	second := got[1]
+	if second.SensorID == nil || *second.SensorID != "sensor-2" || second.RoomID != nil {
+		t.Fatalf("second sensor/room = %v/%v, want sensor-2/nil", second.SensorID, second.RoomID)
 	}
 }
 

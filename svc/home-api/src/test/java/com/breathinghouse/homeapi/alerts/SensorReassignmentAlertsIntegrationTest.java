@@ -235,18 +235,18 @@ class SensorReassignmentAlertsIntegrationTest {
 
     private List<String> activeAlerts(String ruleId) {
         return jdbc.queryForList("""
-                SELECT room_id || '|' || COALESCE(device_id, '')
+                SELECT room_id || '|' || COALESCE(sensor_id, '')
                 FROM home_api.alert
                 WHERE rule_id = ? AND status = 'ACTIVE'
                 ORDER BY room_id
                 """, String.class, ruleId);
     }
 
-    private boolean alertState(String ruleId, String roomId, String deviceKey) {
+    private boolean alertState(String ruleId, String roomId, String sensorKey) {
         return Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT condition_active FROM home_api.alert_state
-                WHERE rule_id = ? AND room_id = ? AND device_key = ?
-                """, Boolean.class, ruleId, roomId, deviceKey));
+                WHERE rule_id = ? AND room_id = ? AND sensor_key = ?
+                """, Boolean.class, ruleId, roomId, sensorKey));
     }
 
     private void insertRoom(String roomId) {

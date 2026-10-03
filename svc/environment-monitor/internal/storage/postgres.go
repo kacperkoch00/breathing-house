@@ -24,7 +24,6 @@ SELECT room_id FROM home_api.sensor WHERE sensor_id = $1;
 const insertReadingSQL = `
 INSERT INTO environment.environment_reading (
   room_id,
-  device_id,
   sensor_id,
   sensor_type,
   temperature,
@@ -39,7 +38,7 @@ INSERT INTO environment.environment_reading (
   kafka_offset
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 ON CONFLICT (kafka_topic, kafka_partition, kafka_offset)
 DO NOTHING;
@@ -87,11 +86,10 @@ func (p *Pool) Ping(ctx context.Context) error {
 	return p.pool.Ping(ctx)
 }
 
-// InsertReading persists a reading in a single transaction. When the reading
-// has a sensor identity, the sensor is registered first (an existing sensor,
-// including its edited display name, is never modified). Schema-v2 readings
-// snapshot the sensor's current room; schema-v1 readings keep the room from
-// the envelope. Duplicate Kafka offsets are ignored.
+// InsertReading persists a reading in a single transaction. The sensor is
+// registered first (an existing sensor, including its edited display name, is
+// never modified). The reading snapshots the sensor's current room. Duplicate
+// Kafka offsets are ignored.
 func (p *Pool) InsertReading(ctx context.Context, r reading.Reading) error {
 	err := p.inTx(ctx, func(ex executor) error {
 		return persistReading(ctx, ex, r)
@@ -104,27 +102,23 @@ func (p *Pool) InsertReading(ctx context.Context, r reading.Reading) error {
 }
 
 func persistReading(ctx context.Context, ex executor, r reading.Reading) error {
-	roomID := r.RoomID
+	if r.SensorID == nil {
+		return fmt.Errorf("sensor_id: required")
+	}
 
-	if r.SensorID != nil {
-		if _, err := ex.Exec(ctx, upsertSensorSQL, *r.SensorID); err != nil {
-			return fmt.Errorf("upsert sensor: %w", err)
-		}
+	if _, err := ex.Exec(ctx, upsertSensorSQL, *r.SensorID); err != nil {
+		return fmt.Errorf("upsert sensor: %w", err)
+	}
 
-		if roomID == nil {
-			var sensorRoomID *string
-			if err := ex.QueryRow(ctx, selectSensorRoomSQL, *r.SensorID).Scan(&sensorRoomID); err != nil {
-				return fmt.Errorf("select sensor room: %w", err)
-			}
-			roomID = sensorRoomID
-		}
+	var roomID *string
+	if err := ex.QueryRow(ctx, selectSensorRoomSQL, *r.SensorID).Scan(&roomID); err != nil {
+		return fmt.Errorf("select sensor room: %w", err)
 	}
 
 	_, err := ex.Exec(
 		ctx,
 		insertReadingSQL,
 		roomID,
-		r.SensorID,
 		r.SensorID,
 		r.SensorType,
 		r.Temperature,

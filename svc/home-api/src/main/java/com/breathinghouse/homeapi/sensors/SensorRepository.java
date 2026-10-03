@@ -40,13 +40,13 @@ public class SensorRepository {
         Map<String, List<String>> typesBySensor = new HashMap<>();
         jdbc.getJdbcTemplate().query(
                 """
-                SELECT DISTINCT COALESCE(sensor_id, device_id) AS sensor_id, sensor_type AS type
+                SELECT DISTINCT sensor_id, sensor_type AS type
                 FROM environment.environment_reading
-                WHERE COALESCE(sensor_id, device_id) IS NOT NULL
+                WHERE sensor_id IS NOT NULL
                 UNION
-                SELECT DISTINCT COALESCE(sensor_id, device_id) AS sensor_id, event_type AS type
+                SELECT DISTINCT sensor_id, event_type AS type
                 FROM occupancy.occupancy_event
-                WHERE COALESCE(sensor_id, device_id) IS NOT NULL
+                WHERE sensor_id IS NOT NULL
                 """,
                 rs -> {
                     typesBySensor
@@ -117,11 +117,11 @@ public class SensorRepository {
                 """
                 SELECT sensor_type AS type
                 FROM environment.environment_reading
-                WHERE COALESCE(sensor_id, device_id) = :sensorId
+                WHERE sensor_id = :sensorId
                 UNION
                 SELECT event_type AS type
                 FROM occupancy.occupancy_event
-                WHERE COALESCE(sensor_id, device_id) = :sensorId
+                WHERE sensor_id = :sensorId
                 """,
                 new MapSqlParameterSource("sensorId", sensorId),
                 String.class);
