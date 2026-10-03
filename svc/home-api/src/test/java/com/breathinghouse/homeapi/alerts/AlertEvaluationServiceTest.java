@@ -382,7 +382,7 @@ class AlertEvaluationServiceTest {
         ArgumentCaptor<AlertState> state = ArgumentCaptor.forClass(AlertState.class);
         verify(repository).saveState(state.capture());
         assertThat(state.getValue().conditionActive()).isTrue();
-        assertThat(state.getValue().deviceId()).isNull();
+        assertThat(state.getValue().sensorId()).isNull();
         // ALL uses latest observed_at among true conditions
         assertThat(state.getValue().conditionStartedAt()).isEqualTo(NOW.minusSeconds(60));
     }
@@ -472,6 +472,83 @@ class AlertEvaluationServiceTest {
         ArgumentCaptor<AlertState> state = ArgumentCaptor.forClass(AlertState.class);
         verify(repository).saveState(state.capture());
         assertThat(state.getValue().conditionStartedAt()).isEqualTo(NOW.minusSeconds(60));
+    }
+
+    @Test
+    void rendersSensorIdPlaceholderAndKeepsDeviceIdAlias() throws Exception {
+        Validated configuration = configuration("""
+                {
+                  "id": "high-co2",
+                  "type": "THRESHOLD",
+                  "source": "ENVIRONMENT",
+                  "sensorType": "AIR",
+                  "metric": "CO2",
+                  "operator": "GREATER_THAN",
+                  "threshold": 1500,
+                  "for": "0s",
+                  "maxDataAge": "10m",
+                  "severity": "WARNING",
+                  "message": "{{sensorId}}/{{deviceId}} in {{roomId}}"
+                }
+                """);
+        when(repository.latestEnvironment(SensorType.AIR)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room", "air-1", SensorType.AIR, null, null, 1600.0, null,
+                        NOW.minusSeconds(30))));
+        when(repository.findState("high-co2", "living-room", "air-1")).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        verify(repository).createAlert(
+                any(),
+                eq("living-room"),
+                eq("air-1"),
+                eq("air-1/air-1 in living-room"),
+                eq("1600"),
+                eq(NOW),
+                anyString());
+    }
+
+    @Test
+    void reevaluateCompositeRoomsResolvesAlertWhenSensorDataLeftTheRoom() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        when(repository.latestEnvironment(SensorType.AIR)).thenReturn(List.of());
+        when(repository.latestEnvironment(SensorType.ROOM)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room", "room-1", SensorType.ROOM, 29.5, null, null, null,
+                        NOW.minusSeconds(30))));
+
+        service.reevaluateCompositeRooms(configuration, List.of("living-room"));
+
+        verify(repository).resolveActiveAlert("poor-air-and-hot", "living-room", null, NOW);
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    void reevaluateCompositeRoomsSkipsRoomsOutsideRuleFilterAndNonCompositeRules() throws Exception {
+        Validated configuration = configuration("""
+                {
+                  "id": "high-co2",
+                  "type": "THRESHOLD",
+                  "source": "ENVIRONMENT",
+                  "sensorType": "AIR",
+                  "metric": "CO2",
+                  "operator": "GREATER_THAN",
+                  "threshold": 1500,
+                  "for": "0s",
+                  "severity": "WARNING",
+                  "message": "m"
+                }
+                """);
+
+        service.reevaluateCompositeRooms(configuration, List.of("living-room"));
+
+        verify(repository, never()).latestEnvironment(any());
+
+        Validated composite = configuration(compositeRule("ALL", "0s"));
+        service.reevaluateCompositeRooms(composite, List.of("kitchen"));
+
+        verify(repository, never()).saveState(any());
     }
 
     private void stubCompositeSnapshots(

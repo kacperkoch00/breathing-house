@@ -4,7 +4,7 @@ import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadExcep
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,17 +32,18 @@ public class PresenceSensorDataTransformer implements SensorDataTransformer {
 
     @Override
     public SensorData transform(String payload, String roomId) {
-        log.debug("Transforming presence sensor payload {} for room: {}", payload, roomId);
+        log.debug("Transforming presence sensor payload {}", payload);
 
         try {
-            JsonNode root = objectMapper.readTree(payload);
+            Map<String, Object> root = objectMapper.readValue(payload, new TypeReference<>() {});
+            String sensorId = PayloadRules.requireSensorId(root);
             String presence = PayloadRules.requireNonBlank(root, "presence");
             boolean present = isPresent(presence);
 
-            return SensorDataFactory.create(
-                    roomId,
+            return SensorDataFactory.createSensorData(
                     SensorType.PRESENCE,
-                    root,
+                    sensorId,
+                    root.get("timestamp"),
                     Map.of("present", present)
             );
         } catch (JsonProcessingException e) {

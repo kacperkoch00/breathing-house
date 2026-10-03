@@ -204,12 +204,19 @@ func processFetches(
 			zap.String("topic", record.Topic),
 			zap.Int32("partition", record.Partition),
 			zap.Int64("offset", record.Offset),
-			zap.String("room_id", decoded.RoomID),
+			zap.String("sensor_id", stringOrEmpty(decoded.SensorID)),
 			zap.String("sensor_type", decoded.SensorType),
 		)
 	}
 
 	return true
+}
+
+func stringOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func persistReadingWithRetry(
@@ -237,6 +244,7 @@ func persistReadingWithRetry(
 			zap.String("topic", record.Topic),
 			zap.Int32("partition", record.Partition),
 			zap.Int64("offset", record.Offset),
+			zap.String("sensor_id", stringOrEmpty(decoded.SensorID)),
 			zap.Error(err),
 		)
 

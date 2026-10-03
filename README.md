@@ -19,21 +19,36 @@ scripts/                     Desktop Minikube setup using GHCR images
 Makefile                     Repository-wide build and deployment commands
 .github/workflows/           Independent CI workflow per service (+ shared workflows)
 docs/kubernetes-wsl.md       WSL Kubernetes and Ingress setup
+docs/architecture/           Cross-service architecture notes
 ```
 
 Kafka for local Kubernetes is installed by `make k8s-kafka` from `deploy/k8s/kafka.yaml`, not a Helm chart. Postgres is installed by `make k8s-postgres` from `deploy/k8s/postgres.yaml` (also not a Helm chart). MQTT uses `deploy/helm/mqtt-broker` via `make k8s-mqtt`.
 
-Local Postgres (Minikube only): ClusterIP service `postgres:5432`, database `breathing_house`, user/password `bh`/`bh` (dev defaults in the Secret). First boot creates schemas `environment` and `occupancy` with append-only history tables; monitor app wiring comes later.
+Local Postgres (Minikube only): ClusterIP service `postgres:5432`, database `breathing_house`, user/password `bh`/`bh` (dev defaults in the Secret). First boot creates schemas `environment`, `occupancy`, and `home_api` tables for rooms/sensors plus append-only history tables with nullable `room_id` and `sensor_id`.
+
+## Domain model (sensors and rooms)
+
+- Physical sensors emit an immutable `sensorId`. Users may rename sensors (`displayName`), create rooms, and assign each sensor to at most one room.
+- Rooms are first-class entities (`roomId` is a server-generated UUID for new rooms). Room `name` need not be unique.
+- Every reading/event stores the room assignment that existed at ingest time. Moving a sensor does not rewrite history.
+- See [docs/architecture/message-flow.md](docs/architecture/message-flow.md) for MQTT/Kafka envelopes, schema v1/v2 transition, and identifiers.
+
+### Rolling deployment order
+
+1. Deploy **home-api** (Flyway V4: `home_api.room` / `home_api.sensor`, history `sensor_id`, nullable `room_id`, data backfill).
+2. Deploy **environment-monitor** and **occupancy-monitor** (accept schema v1 and v2).
+3. Deploy **sensors-data-collector** (schema-v2 MQTT topics and Kafka envelopes).
+4. Later (separate task): remove schema-v1 compatibility and deprecated columns.
 
 ## Services
 
 Each service has its own README with local development, testing, image, and
 deployment instructions.
 
-- **environment-monitor** (Go): consumes Kafka `sensor-data` and persists environment readings. `/ready` requires Kafka and database connectivity.
-- **occupancy-monitor** (Go): consumes Kafka `event-data` and persists occupancy events. `/ready` requires Kafka and database connectivity.
-- **sensors-data-collector** (Spring Boot): consumes MQTT sensor topics, validates and transforms payloads, publishes to Kafka.
-- **home-api** (Spring Boot): single backend API consumed by `home-dashboard`; read/query boundary for historical environment and occupancy data (`/api/v1/rooms` with display names, environment readings, occupancy events), plus sensor-gateway online status. It evaluates user-configurable JSON alert rules on a 10-second default interval and persists pending, active, and resolved alert state. Alert REST endpoints and notification delivery are still planned. `/ready` requires the history, alert, gateway heartbeat, and room metadata tables to be queryable.
+- **environment-monitor** (Go): consumes Kafka `sensor-data` (schema v1/v2), auto-registers sensors, and persists environment readings with a room snapshot. `/ready` requires Kafka and database connectivity.
+- **occupancy-monitor** (Go): consumes Kafka `event-data` (schema v1/v2), auto-registers sensors, and persists occupancy events with a room snapshot. `/ready` requires Kafka and database connectivity.
+- **sensors-data-collector** (Spring Boot): consumes MQTT `home/sensors/{type}` topics, validates `sensorId`, publishes schema-v2 Kafka envelopes keyed by `sensorId`. Gateway STATUS remains schema v1.
+- **home-api** (Spring Boot): BFF for explicit rooms/sensors/assignments, room-scoped history (`sensorId` on items), sensor-gateway online status, and alert evaluation. `/ready` requires history, alert, gateway heartbeat, `home_api.room`, and `home_api.sensor` tables to be queryable.
 - **home-dashboard** (React/Vite): static UI with mock data; not wired to live backends yet.
 
 Backend services keep their HTTP contract in an `openapi.yaml` file. Go services
@@ -164,7 +179,7 @@ Publish from the **host** with `localhost` (not `host.minikube.internal`):
 
 ```bash
 ./scripts/publish-sensor-event.sh air
-./scripts/publish-sensor-event.sh room --room living
+./scripts/publish-sensor-event.sh room --sensor-id living-room-1
 ./scripts/publish-sensor-event.sh opening --count 3
 ```
 

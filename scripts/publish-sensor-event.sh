@@ -2,7 +2,7 @@
 # Publish one or more randomized valid MQTT sensor events to a broker.
 #
 # Usage:
-#   ./scripts/publish-sensor-event.sh <type> [--room kitchen] [--count 1]
+#   ./scripts/publish-sensor-event.sh <type> [--sensor-id <id>] [--count 1]
 #     [--host localhost] [--port 1883] [--qos 1]
 #
 # <type> is one of: room | air | opening | presence | status
@@ -14,7 +14,7 @@ set -euo pipefail
 MQTT_IMAGE="${MQTT_IMAGE:-eclipse-mosquitto:2.0.18}"
 
 TYPE=""
-ROOM="kitchen"
+SENSOR_ID=""
 COUNT=1
 HOST="localhost"
 PORT=1883
@@ -27,14 +27,14 @@ Usage: ./scripts/publish-sensor-event.sh <type> [options]
 Publish randomized valid MQTT payloads for Breathing House sensors.
 
 Types:
-  room       home/<room>/room      {"temperature":…,"light":…}
-  air        home/<room>/air       {"temperature":…,"humidity":…,"co2":…}
-  opening    home/<room>/opening   {"state":"OPEN"|"CLOSED"}
-  presence   home/<room>/presence  {"presence":"DETECTED"|"CLEAR"}
-  status     home/gateway/status   {"status":"…"}
+  room       home/sensors/room      {"sensorId":…,"temperature":…,"light":…}
+  air        home/sensors/air       {"sensorId":…,"temperature":…,"humidity":…,"co2":…}
+  opening    home/sensors/opening   {"sensorId":…,"state":"OPEN"|"CLOSED"}
+  presence   home/sensors/presence  {"sensorId":…,"presence":"DETECTED"|"CLEAR"}
+  status     home/gateway/status    {"status":"…"}
 
 Options:
-  --room <name>    Room segment (default: kitchen); ignored for status
+  --sensor-id <id> Sensor identifier (default: <type>-1, max 200 chars); ignored for status
   --count <n>      Number of messages to publish (default: 1)
   --host <host>    Broker host from the publisher side (default: localhost)
   --port <port>    Broker port (default: 1883)
@@ -43,7 +43,7 @@ Options:
 
 Examples:
   ./scripts/publish-sensor-event.sh air
-  ./scripts/publish-sensor-event.sh room --room living --count 3
+  ./scripts/publish-sensor-event.sh room --sensor-id living-room-1 --count 3
 USAGE
 }
 
@@ -76,7 +76,7 @@ pick() {
 build_topic() {
   case "${TYPE}" in
     status) printf 'home/gateway/status\n' ;;
-    room|air|opening|presence) printf 'home/%s/%s\n' "${ROOM}" "${TYPE}" ;;
+    room|air|opening|presence) printf 'home/sensors/%s\n' "${TYPE}" ;;
     *) die "unknown type: ${TYPE} (expected room|air|opening|presence|status)" ;;
   esac
 }
@@ -87,21 +87,21 @@ build_payload() {
     room)
       temp="$(rand_float 18 26)"
       light="$(rand_int 50 800)"
-      printf '{"temperature":%s,"light":%s}\n' "${temp}" "${light}"
+      printf '{"sensorId":"%s","temperature":%s,"light":%s}\n' "${SENSOR_ID}" "${temp}" "${light}"
       ;;
     air)
       temp="$(rand_float 18 26)"
       humidity="$(rand_int 30 60)"
       co2="$(rand_int 400 1200)"
-      printf '{"temperature":%s,"humidity":%s,"co2":%s}\n' "${temp}" "${humidity}" "${co2}"
+      printf '{"sensorId":"%s","temperature":%s,"humidity":%s,"co2":%s}\n' "${SENSOR_ID}" "${temp}" "${humidity}" "${co2}"
       ;;
     opening)
       state="$(pick OPEN CLOSED)"
-      printf '{"state":"%s"}\n' "${state}"
+      printf '{"sensorId":"%s","state":"%s"}\n' "${SENSOR_ID}" "${state}"
       ;;
     presence)
       presence="$(pick DETECTED CLEAR)"
-      printf '{"presence":"%s"}\n' "${presence}"
+      printf '{"sensorId":"%s","presence":"%s"}\n' "${SENSOR_ID}" "${presence}"
       ;;
     status)
       status="$(pick ONLINE OK READY)"
@@ -148,9 +148,9 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --room)
-      [[ $# -ge 2 ]] || die "--room requires a value"
-      ROOM="$2"
+    --sensor-id)
+      [[ $# -ge 2 ]] || die "--sensor-id requires a value"
+      SENSOR_ID="$2"
       shift 2
       ;;
     --count)
@@ -189,6 +189,8 @@ done
 [[ -n "${TYPE}" ]] || { usage >&2; die "missing <type>"; }
 [[ "${COUNT}" =~ ^[1-9][0-9]*$ ]] || die "--count must be a positive integer"
 [[ "${QOS}" =~ ^[012]$ ]] || die "--qos must be 0, 1, or 2"
+[[ -n "${SENSOR_ID}" ]] || SENSOR_ID="${TYPE}-1"
+[[ "${SENSOR_ID}" =~ ^[A-Za-z0-9._:-]{1,200}$ ]] || die "--sensor-id must be 1-200 chars of [A-Za-z0-9._:-]"
 
 topic="$(build_topic)"
 i=0

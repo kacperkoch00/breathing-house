@@ -204,7 +204,8 @@ func processFetches(
 			zap.String("topic", record.Topic),
 			zap.Int32("partition", record.Partition),
 			zap.Int64("offset", record.Offset),
-			zap.String("room_id", decoded.RoomID),
+			zap.Int("schema_version", decoded.SchemaVersion),
+			zap.Stringp("sensor_id", decoded.SensorID),
 			zap.String("event_type", decoded.EventType),
 		)
 	}

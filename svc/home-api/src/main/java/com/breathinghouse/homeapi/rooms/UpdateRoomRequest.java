@@ -1,17 +1,18 @@
 package com.breathinghouse.homeapi.rooms;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import jakarta.validation.constraints.NotNull;
 
-public record UpdateRoomRequest(@NotNull JsonNode displayName) {
+public record UpdateRoomRequest(JsonNode name, JsonNode description) {
 
-    public String requireDisplayNameString() {
-        if (displayName == null || displayName.isNull()) {
-            throw new IllegalArgumentException("displayName must be provided");
+    public RoomPatch toPatch() {
+        boolean hasName = name != null;
+        boolean hasDescription = description != null;
+        if (!hasName && !hasDescription) {
+            throw new IllegalArgumentException("at least one of name or description must be provided");
         }
-        if (!displayName.isTextual()) {
-            throw new IllegalArgumentException("displayName must be a string");
-        }
-        return displayName.asText();
+        return new RoomPatch(
+                hasName ? RoomFields.requireName(name) : null,
+                hasDescription,
+                hasDescription ? RoomFields.optionalDescription(description) : null);
     }
 }

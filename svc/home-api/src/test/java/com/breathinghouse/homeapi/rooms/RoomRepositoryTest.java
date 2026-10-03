@@ -22,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 class RoomRepositoryTest {
 
+    private static final Instant NOW = Instant.parse("2026-10-03T10:00:00Z");
+
     @Autowired
     private RoomRepository repository;
 
@@ -30,149 +32,119 @@ class RoomRepositoryTest {
 
     @BeforeEach
     void clean() {
-        jdbc.update("DELETE FROM home_api.room_metadata");
+        jdbc.update("DELETE FROM home_api.sensor");
+        jdbc.update("DELETE FROM home_api.room");
         jdbc.update("DELETE FROM environment.environment_reading");
         jdbc.update("DELETE FROM occupancy.occupancy_event");
     }
 
     @Test
-    void listsRoomPresentOnlyInEnvironmentHistory() {
-        insertEnvironment("bedroom");
+    void listsRoomsFromRoomTableNotFromHistory() {
+        insertHistoryRoom("history-only");
+        repository.insert("empty-room", "Empty", null, NOW);
 
         assertThat(repository.listRooms())
-                .containsExactly(new RoomSummary("bedroom", "bedroom"));
+                .containsExactly(new RoomSummary("empty-room", "Empty", null, List.of()));
     }
 
     @Test
-    void listsRoomPresentOnlyInOccupancyHistory() {
-        insertOccupancy("kitchen");
+    void listsRoomsWithCurrentSensorIdsOnly() {
+        repository.insert("living", "Living Room", "Open plan", NOW);
+        repository.insert("bedroom", "Bedroom", null, NOW);
+        insertSensor("room-1", "living");
+        insertSensor("air-1", "living");
+        insertSensor("air-2", null);
 
-        assertThat(repository.listRooms())
-                .containsExactly(new RoomSummary("kitchen", "kitchen"));
+        assertThat(repository.listRooms()).containsExactly(
+                new RoomSummary("bedroom", "Bedroom", null, List.of()),
+                new RoomSummary("living", "Living Room", "Open plan", List.of("air-1", "room-1")));
     }
 
     @Test
-    void listsRoomPresentInBothSourcesOnce() {
-        insertEnvironment("living-room");
-        insertOccupancy("living-room");
-
-        assertThat(repository.listRooms())
-                .containsExactly(new RoomSummary("living-room", "living-room"));
-    }
-
-    @Test
-    void defaultsDisplayNameToRoomIdWithoutMetadata() {
-        insertEnvironment("bedroom");
-        insertOccupancy("kitchen");
-
-        assertThat(repository.listRooms())
-                .containsExactly(
-                        new RoomSummary("bedroom", "bedroom"),
-                        new RoomSummary("kitchen", "kitchen"));
-    }
-
-    @Test
-    void usesStoredMetadataOverride() {
-        insertEnvironment("living-room");
-        repository.upsertDisplayName("living-room", "Living Room", Instant.parse("2026-10-03T10:00:00Z"));
-
-        assertThat(repository.listRooms())
-                .containsExactly(new RoomSummary("living-room", "Living Room"));
-    }
-
-    @Test
-    void ignoresOrphanedMetadata() {
-        jdbc.update("""
-                INSERT INTO home_api.room_metadata (room_id, display_name, updated_at)
-                VALUES ('ghost', 'Ghost Room', ?)
-                """, Timestamp.from(Instant.parse("2026-10-03T10:00:00Z")));
-        insertEnvironment("bedroom");
-
-        assertThat(repository.listRooms())
-                .containsExactly(new RoomSummary("bedroom", "bedroom"));
-    }
-
-    @Test
-    void ordersRoomsByRoomId() {
-        insertEnvironment("living-room");
-        insertOccupancy("bedroom");
-        insertEnvironment("attic");
+    void ordersByNameThenRoomId() {
+        repository.insert("b", "Same", null, NOW);
+        repository.insert("a", "Same", null, NOW);
+        repository.insert("c", "Attic", null, NOW);
 
         assertThat(repository.listRooms())
                 .extracting(RoomSummary::roomId)
-                .containsExactly("attic", "bedroom", "living-room");
+                .containsExactly("c", "a", "b");
     }
 
     @Test
-    void firstRenameInsertsMetadataAndLaterRenameUpdatesRow() {
-        insertEnvironment("living-room");
-        Instant first = Instant.parse("2026-10-03T10:00:00Z");
-        Instant second = Instant.parse("2026-10-03T11:00:00Z");
+    void findByIdReturnsRoomWithSensors() {
+        repository.insert("living", "Living Room", "Open plan", NOW);
+        insertSensor("air-1", "living");
 
-        repository.upsertDisplayName("living-room", "Living Room", first);
-        Timestamp firstUpdatedAt = jdbc.queryForObject(
-                "SELECT updated_at FROM home_api.room_metadata WHERE room_id = 'living-room'",
-                Timestamp.class);
-
-        repository.upsertDisplayName("living-room", "Salon", second);
-        Timestamp secondUpdatedAt = jdbc.queryForObject(
-                "SELECT updated_at FROM home_api.room_metadata WHERE room_id = 'living-room'",
-                Timestamp.class);
-        String displayName = jdbc.queryForObject(
-                "SELECT display_name FROM home_api.room_metadata WHERE room_id = 'living-room'",
-                String.class);
-        Integer count = jdbc.queryForObject("SELECT count(*) FROM home_api.room_metadata", Integer.class);
-
-        assertThat(displayName).isEqualTo("Salon");
-        assertThat(count).isEqualTo(1);
-        assertThat(firstUpdatedAt.toInstant()).isEqualTo(first);
-        assertThat(secondUpdatedAt.toInstant()).isEqualTo(second);
-        assertThat(secondUpdatedAt).isAfter(firstUpdatedAt);
+        assertThat(repository.findById("living"))
+                .contains(new RoomSummary("living", "Living Room", "Open plan", List.of("air-1")));
+        assertThat(repository.findById("missing")).isEmpty();
     }
 
     @Test
-    void acceptsDuplicateDisplayNames() {
-        insertEnvironment("bedroom");
-        insertEnvironment("office");
-        Instant now = Instant.parse("2026-10-03T10:00:00Z");
+    void existsReflectsRoomTable() {
+        repository.insert("living", "Living Room", null, NOW);
+        insertHistoryRoom("history-only");
 
-        repository.upsertDisplayName("bedroom", "Shared Name", now);
-        repository.upsertDisplayName("office", "Shared Name", now);
-
-        assertThat(repository.listRooms())
-                .containsExactly(
-                        new RoomSummary("bedroom", "Shared Name"),
-                        new RoomSummary("office", "Shared Name"));
+        assertThat(repository.exists("living")).isTrue();
+        assertThat(repository.exists("history-only")).isFalse();
     }
 
     @Test
-    void existsInHistoryReflectsDiscoveredRooms() {
-        insertEnvironment("bedroom");
+    void updatePersistsNameDescriptionAndUpdatedAt() {
+        repository.insert("living", "Living Room", "Open plan", NOW);
+        Instant later = NOW.plusSeconds(60);
 
-        assertThat(repository.existsInHistory("bedroom")).isTrue();
-        assertThat(repository.existsInHistory("missing")).isFalse();
+        int updated = repository.update("living", "Salon", null, later);
+
+        assertThat(updated).isEqualTo(1);
+        assertThat(repository.findById("living"))
+                .contains(new RoomSummary("living", "Salon", null, List.of()));
+        Timestamp updatedAt = jdbc.queryForObject(
+                "SELECT updated_at FROM home_api.room WHERE room_id = 'living'", Timestamp.class);
+        Timestamp createdAt = jdbc.queryForObject(
+                "SELECT created_at FROM home_api.room WHERE room_id = 'living'", Timestamp.class);
+        assertThat(updatedAt.toInstant()).isEqualTo(later);
+        assertThat(createdAt.toInstant()).isEqualTo(NOW);
+        assertThat(repository.update("missing", "x", null, later)).isZero();
     }
 
     @Test
-    void readinessChecksRoomMetadataTable() {
+    void acceptsDuplicateNames() {
+        repository.insert("a", "Shared Name", null, NOW);
+        repository.insert("b", "Shared Name", null, NOW);
+
+        assertThat(repository.listRooms()).extracting(RoomSummary::name)
+                .containsExactly("Shared Name", "Shared Name");
+    }
+
+    @Test
+    void readinessChecksRoomAndSensorTables() {
         assertThat(repository.isReady()).isTrue();
     }
 
-    private void insertEnvironment(String roomId) {
-        Instant observed = Instant.parse("2026-10-03T10:00:00Z");
+    @Test
+    void readinessFailsWhenSensorTableIsMissing() {
+        jdbc.execute("ALTER TABLE home_api.sensor RENAME TO sensor_gone");
+        try {
+            assertThat(repository.isReady()).isFalse();
+        } finally {
+            jdbc.execute("ALTER TABLE home_api.sensor_gone RENAME TO sensor");
+        }
+    }
+
+    private void insertSensor(String sensorId, String roomId) {
+        jdbc.update("""
+                INSERT INTO home_api.sensor (sensor_id, display_name, room_id)
+                VALUES (?, ?, ?)
+                """, sensorId, sensorId, roomId);
+    }
+
+    private void insertHistoryRoom(String roomId) {
         jdbc.update("""
                 INSERT INTO environment.environment_reading (
                   room_id, sensor_type, co2, observed_at, received_at
                 ) VALUES (?, 'AIR', 500, ?, ?)
-                """, roomId, Timestamp.from(observed), Timestamp.from(observed));
-    }
-
-    private void insertOccupancy(String roomId) {
-        Instant observed = Instant.parse("2026-10-03T10:00:00Z");
-        jdbc.update("""
-                INSERT INTO occupancy.occupancy_event (
-                  room_id, event_type, present, observed_at, received_at
-                ) VALUES (?, 'PRESENCE', true, ?, ?)
-                """, roomId, Timestamp.from(observed), Timestamp.from(observed));
+                """, roomId, Timestamp.from(NOW), Timestamp.from(NOW));
     }
 }

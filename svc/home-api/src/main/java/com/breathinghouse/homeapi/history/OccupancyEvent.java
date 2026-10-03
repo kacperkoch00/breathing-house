@@ -5,7 +5,7 @@ import java.time.Instant;
 public record OccupancyEvent(
         long id,
         String roomId,
-        String deviceId,
+        String sensorId,
         EventType eventType,
         Boolean present,
         Boolean open,

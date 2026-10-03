@@ -7,6 +7,8 @@ import java.util.Map;
 
 final class PayloadRules {
 
+    private static final int MAX_SENSOR_ID_LENGTH = 200;
+
     private PayloadRules() {
     }
 
@@ -51,14 +53,13 @@ final class PayloadRules {
         return text;
     }
 
-    static String requireNonBlank(JsonNode root, String field) {
-        JsonNode node = root.get(field);
-        if (node == null || node.isNull() || node.isMissingNode()) {
-            throw new InvalidSensorPayloadException("Missing required field: " + field);
+    static String requireSensorId(Map<String, Object> values) {
+        String sensorId = requireNonBlank(values, "sensorId").trim();
+        if (sensorId.length() > MAX_SENSOR_ID_LENGTH) {
+            throw new InvalidSensorPayloadException(
+                    "Field 'sensorId' must be at most " + MAX_SENSOR_ID_LENGTH + " characters"
+            );
         }
-        if (!node.isTextual() || node.asText().isBlank()) {
-            throw new InvalidSensorPayloadException("Field '" + field + "' must be a non-blank string");
-        }
-        return node.asText();
+        return sensorId;
     }
 }

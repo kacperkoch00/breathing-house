@@ -17,11 +17,16 @@ curl http://localhost:8083/ready
 
 The service consumes the following MQTT topics:
 
-* `home/+/room`
-* `home/+/air`
-* `home/+/opening`
-* `home/+/presence`
+* `home/sensors/room`
+* `home/sensors/air`
+* `home/sensors/opening`
+* `home/sensors/presence`
 * `home/gateway/status`
+
+Sensor topics carry no room identity: the sensor type is the last topic segment
+and the sensor is identified by the `sensorId` field in the payload. Messages on
+other topics (including the old `home/<room>/<type>` form) are ignored as
+`invalid_topic`.
 
 Sensor data is transformed according to its sensor type and published to the
 following Kafka topics:
@@ -68,7 +73,7 @@ falls back to its default local development value.
 | `MQTT_BROKER_IP`          | IPv4 address or hostname of the MQTT broker       | `localhost`                                                                 | `mqtt.broker-ip`                 |
 | `MQTT_BROKER_PORT_NUMBER` | Network port for the MQTT 5 broker                | `1883`                                                                      | `mqtt.broker-port`               |
 | `MQTT_CLIENT_ID`          | Base identifier string for this microservice node | `sensors-data-collector`                                                    | `mqtt.client-id`                 |
-| `MQTT_CONSUMER_TOPICS`    | Comma-separated list of target sensor topics      | `home/+/room,home/+/air,home/+/opening,home/+/presence,home/gateway/status` | `mqtt.consumer-topics`           |
+| `MQTT_CONSUMER_TOPICS`    | Comma-separated list of target sensor topics      | `home/sensors/room,home/sensors/air,home/sensors/opening,home/sensors/presence,home/gateway/status` | `mqtt.consumer-topics`           |
 | `MQTT_INITIAL_DELAY_MS`   | Starting delay for reconnect attempts             | `1000`                                                                      | `mqtt.initial-delay-ms`          |
 | `MQTT_MAX_DELAY_MS`       | Maximum delay between reconnect attempts          | `60000`                                                                     | `mqtt.max-delay-ms`              |
 | `MQTT_QOS`                | MQTT subscription QoS (0, 1, or 2)                | `1`                                                                         | `mqtt.qos`                       |
@@ -176,14 +181,17 @@ written to the DLQ topic (`sensor-data-dlq` by default) as a `PoisonMessage`.
 
 | Sensor Type | Required Fields | Rules |
 | :---------- | :-------------- | :---- |
-| `ROOM`      | `temperature`, `light` (numbers) | temperature ∈ [-40, 80]; light ≥ 0 (lux). Then `lightLevel` is derived |
-| `AIR`       | `temperature`, `humidity`, `co2` (numbers) | temperature ∈ [-40, 80]; humidity ∈ [0, 100]; co2 ∈ [0, 10000] |
-| `OPENING`   | `state` (string) | `OPEN` / `CLOSED` (case-insensitive) → `open` boolean |
-| `PRESENCE`  | `presence` (string) | `DETECTED` / `CLEAR` (case-insensitive) → `present` boolean |
+| `ROOM`      | `sensorId` (string), `temperature`, `light` (numbers) | temperature ∈ [-40, 80]; light ≥ 0 (lux). Then `lightLevel` is derived |
+| `AIR`       | `sensorId` (string), `temperature`, `humidity`, `co2` (numbers) | temperature ∈ [-40, 80]; humidity ∈ [0, 100]; co2 ∈ [0, 10000] |
+| `OPENING`   | `sensorId` (string), `state` (string) | `OPEN` / `CLOSED` (case-insensitive) → `open` boolean |
+| `PRESENCE`  | `sensorId` (string), `presence` (string) | `DETECTED` / `CLEAR` (case-insensitive) → `present` boolean |
 | `STATUS`    | `status` (string) | non-blank |
 
-Optional envelope fields `timestamp` and `deviceId` remain optional. Empty `{}`
-payloads for `ROOM` / `AIR` / `STATUS` are rejected.
+Every non-status payload must include `sensorId`: a textual, non-blank value of at
+most 200 characters after trimming (the trimmed value is used). Missing,
+`null`, blank, or non-string `sensorId` values are rejected to the DLQ.
+`STATUS` payloads do not use `sensorId`. The optional `timestamp` field remains
+optional. Empty `{}` payloads for `ROOM` / `AIR` / `STATUS` are rejected.
 
 ## Metrics
 
@@ -205,22 +213,33 @@ curl http://localhost:8083/actuator/prometheus
 
 ## Kafka Message Envelope
 
-Transformed messages published to Kafka use this JSON envelope (`SensorData`):
+Transformed sensor and occupancy messages (`ROOM`, `AIR`, `OPENING`, `PRESENCE`)
+use schema version `2` (`SensorData`):
 
 | Field           | Type              | Description                                                                 |
 | :-------------- | :---------------- | :-------------------------------------------------------------------------- |
-| `schemaVersion` | `int`             | Always `1` (`SensorData.SCHEMA_VERSION`)                                    |
-| `roomId`        | `string`          | Room id from the MQTT topic (or `gateway` for status)                       |
-| `deviceId`      | `string` or null  | Optional textual `deviceId` from the MQTT payload                           |
-| `type`          | `SensorType`      | `ROOM`, `AIR`, `OPENING`, `PRESENCE`, or `STATUS`                           |
+| `schemaVersion` | `int`             | `2` (`SensorData.SCHEMA_VERSION`)                                           |
+| `sensorId`      | `string`          | Trimmed, non-blank `sensorId` from the MQTT payload (max 200 characters)    |
+| `type`          | `SensorType`      | `ROOM`, `AIR`, `OPENING`, or `PRESENCE`                                     |
 | `observedAt`    | `Instant`         | From payload `timestamp` when parseable; otherwise set at transform time    |
 | `receivedAt`    | `Instant`         | Always set to transform time (`Instant.now()`)                              |
-| `values`        | `object`          | Sensor-specific fields                                                      |
+| `values`        | `object`          | Sensor-specific fields, without `sensorId`, `timestamp`, or envelope fields |
+
+Schema-v2 envelopes have no `roomId` or `deviceId`; `values` never contains
+`sensorId`, `timestamp`, `deviceId`, `roomId`, or other envelope fields.
+
+`STATUS` messages (on `status-data`) stay on schema version `1`
+(`SensorData.STATUS_SCHEMA_VERSION`) with `roomId` (`gateway`, from the topic) and
+optional `deviceId` from the payload, and no `sensorId`. Null fields are omitted
+from the JSON.
 
 Payload `timestamp` parsing: ISO-8601 strings via `Instant.parse`; numbers greater
 than `1e12` as epoch millis, otherwise epoch seconds. Unparseable values fall back
-to transform time without failing the message. The Kafka record key remains
-`roomId`.
+to transform time without failing the message.
+
+Kafka record keys: `sensorId` for `ROOM` / `AIR` / `OPENING` / `PRESENCE`, and
+`roomId` (`gateway`) for `STATUS`. DLQ records are keyed by the topic `roomId`, so
+they have no key for non-status sensors.
 
 ## End-to-End Flow
 

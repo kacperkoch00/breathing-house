@@ -5,7 +5,7 @@ import java.time.Instant;
 public record EnvironmentReading(
         long id,
         String roomId,
-        String deviceId,
+        String sensorId,
         SensorType sensorType,
         Double temperature,
         Double humidity,

@@ -31,14 +31,16 @@ class PresenceSensorDataTransformerTest {
     void shouldTransformDetectedState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertNull(result.deviceId());
         assertEquals(SensorType.PRESENCE, result.type());
         assertNotNull(result.observedAt());
@@ -50,13 +52,15 @@ class PresenceSensorDataTransformerTest {
     void shouldTransformClearState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "CLEAR"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertEquals(SensorType.PRESENCE, result.type());
         assertNotNull(result.observedAt());
         assertNotNull(result.receivedAt());
@@ -67,11 +71,12 @@ class PresenceSensorDataTransformerTest {
     void shouldAcceptLowercaseDetectedState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "detected"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Map.of("present", true), result.values());
     }
@@ -80,11 +85,12 @@ class PresenceSensorDataTransformerTest {
     void shouldAcceptLowercaseClearState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "clear"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Map.of("present", false), result.values());
     }
@@ -93,13 +99,14 @@ class PresenceSensorDataTransformerTest {
     void shouldThrowExceptionForUnknownPresenceState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "UNKNOWN"
                 }
                 """;
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Unknown presence state: UNKNOWN", exception.getMessage());
@@ -107,11 +114,11 @@ class PresenceSensorDataTransformerTest {
 
     @Test
     void shouldThrowExceptionWhenPresenceMissing() {
-        String payload = "{}";
+        String payload = "{\"sensorId\":\"sensor-1\"}";
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Missing required field: presence", exception.getMessage());
@@ -121,13 +128,14 @@ class PresenceSensorDataTransformerTest {
     void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED",
                 }
                 """;
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Invalid presence sensor payload", exception.getMessage());
@@ -138,12 +146,13 @@ class PresenceSensorDataTransformerTest {
     void shouldUseObservedAtFromIsoTimestamp() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED",
                     "timestamp": "2024-01-15T10:30:00Z"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
     }
@@ -152,12 +161,13 @@ class PresenceSensorDataTransformerTest {
     void shouldUseObservedAtFromEpochMillis() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED",
                     "timestamp": 1704312600000
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
     }
@@ -166,13 +176,14 @@ class PresenceSensorDataTransformerTest {
     void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED"
                 }
                 """;
 
         Instant before = Instant.now();
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         Instant after = Instant.now();
 
@@ -183,16 +194,18 @@ class PresenceSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetDeviceIdWhenPresent() {
+    void shouldNotExposeDeviceIdInEnvelope() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "presence": "DETECTED",
                     "deviceId": "pir-1"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("pir-1", result.deviceId());
+        assertNull(result.deviceId());
+        assertFalse(result.values().containsKey("deviceId"));
     }
 }

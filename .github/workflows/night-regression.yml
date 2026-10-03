@@ -192,6 +192,12 @@ jobs:
             --if-not-exists \
             --topic status-data
 
+      - name: Install Postgres
+        run: |
+          kubectl apply -f deploy/k8s/postgres.yaml
+          kubectl rollout status deployment/postgres --timeout=180s
+          kubectl wait --for=condition=ready pod -l app=postgres --timeout=180s
+
       - name: Build service images
         run: |
           for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
@@ -204,9 +210,28 @@ jobs:
             kind load docker-image "$service:nightly" --name "$KIND_CLUSTER"
           done
 
-      - name: Install all service charts with Broker Routing Overrides
+      # Rolling order: home-api (Flyway V4) → monitors → collector/dashboard
+      - name: Install home-api
         run: |
-          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
+          helm upgrade --install home-api "deploy/helm/home-api" \
+            --set image.repository=home-api \
+            --set image.tag=nightly \
+            --set image.pullPolicy=Never \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=home-api.local \
+            --set ingress.hosts[0].paths[0].path=/ \
+            --set ingress.hosts[0].paths[0].pathType=Prefix \
+            --set env.KAFKA_BOOTSTRAP_SERVERS=kafka:9092 \
+            --set env.KAFKA_BROKERS=kafka:9092 \
+            --set env.DATABASE_URL=jdbc:postgresql://postgres:5432/breathing_house \
+            --set env.DATABASE_USERNAME=bh \
+            --set env.DATABASE_PASSWORD=bh
+          deployment=$(kubectl get deployment -l "app.kubernetes.io/name=home-api" -o jsonpath='{.items[0].metadata.name}')
+          kubectl rollout status "deployment/$deployment" --timeout=180s
+
+      - name: Install monitors
+        run: |
+          for service in environment-monitor occupancy-monitor; do
             helm upgrade --install "$service" "deploy/helm/$service" \
               --set image.repository="$service" \
               --set image.tag=nightly \
@@ -215,15 +240,36 @@ jobs:
               --set ingress.hosts[0].host="$service.local" \
               --set ingress.hosts[0].paths[0].path=/ \
               --set ingress.hosts[0].paths[0].pathType=Prefix \
-              --set env.MQTT_BROKER_IP="mosquitto" \
-              --set env.MQTT_BROKER_PORT_NUMBER="1883" \
-              --set env.KAFKA_BOOTSTRAP_SERVERS="kafka:9092" \
-              --set env.KAFKA_BROKERS="kafka:9092"
+              --set env.KAFKA_BROKERS=kafka:9092 \
+              --set env.DATABASE_URL=postgres://bh:bh@postgres:5432/breathing_house?sslmode=disable
+            deployment=$(kubectl get deployment -l "app.kubernetes.io/name=$service" -o jsonpath='{.items[0].metadata.name}')
+            kubectl rollout status "deployment/$deployment" --timeout=180s
           done
 
-      - name: Wait for all service rollouts
+      - name: Install collector and dashboard
         run: |
-          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
+          helm upgrade --install sensors-data-collector "deploy/helm/sensors-data-collector" \
+            --set image.repository=sensors-data-collector \
+            --set image.tag=nightly \
+            --set image.pullPolicy=Never \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=sensors-data-collector.local \
+            --set ingress.hosts[0].paths[0].path=/ \
+            --set ingress.hosts[0].paths[0].pathType=Prefix \
+            --set env.MQTT_BROKER_IP=mosquitto \
+            --set env.MQTT_BROKER_PORT_NUMBER=1883 \
+            --set env.KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+
+          helm upgrade --install home-dashboard "deploy/helm/home-dashboard" \
+            --set image.repository=home-dashboard \
+            --set image.tag=nightly \
+            --set image.pullPolicy=Never \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=home-dashboard.local \
+            --set ingress.hosts[0].paths[0].path=/ \
+            --set ingress.hosts[0].paths[0].pathType=Prefix
+
+          for service in sensors-data-collector home-dashboard; do
             deployment=$(kubectl get deployment -l "app.kubernetes.io/name=$service" -o jsonpath='{.items[0].metadata.name}')
             kubectl rollout status "deployment/$deployment" --timeout=180s
           done
@@ -247,6 +293,7 @@ jobs:
           kubectl get events -A --sort-by=.lastTimestamp > robot-results/kubernetes/events.txt
           kubectl logs deployment/mosquitto > robot-results/kubernetes/mosquitto.log 2>&1 || true
           kubectl logs deployment/kafka > robot-results/kubernetes/kafka.log 2>&1 || true
+          kubectl logs deployment/postgres > robot-results/kubernetes/postgres.log 2>&1 || true
 
           for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             kubectl logs -l "app.kubernetes.io/name=$service" --all-containers=true --tail=200 \

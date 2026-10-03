@@ -10,6 +10,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -65,43 +66,74 @@ class KafkaIntegrationIT {
 
     @ParameterizedTest
     @CsvSource({
-            "home/kitchen/room,     sensor-data, '{\"temperature\":22.5,\"light\":250}', ROOM",
-            "home/kitchen/air,      sensor-data, '{\"temperature\":22.5,\"humidity\":45,\"co2\":650}', AIR",
-            "home/kitchen/opening,  event-data,  '{\"state\":\"OPEN\"}', OPENING",
-            "home/kitchen/presence, event-data,  '{\"presence\":\"DETECTED\"}', PRESENCE",
-            "home/gateway/status,   status-data,  '{\"status\":\"ONLINE\"}', STATUS"
+            "home/sensors/room,     sensor-data, '{\"sensorId\":\"room-1\",\"temperature\":22.5,\"light\":250}', ROOM",
+            "home/sensors/air,      sensor-data, '{\"sensorId\":\"air-1\",\"temperature\":22.5,\"humidity\":45,\"co2\":650}', AIR",
+            "home/sensors/opening,  event-data,  '{\"sensorId\":\"door-1\",\"state\":\"OPEN\"}', OPENING",
+            "home/sensors/presence, event-data,  '{\"sensorId\":\"pir-1\",\"presence\":\"DETECTED\"}', PRESENCE"
     })
-    void shouldTransformMqttMessageAndPublishToKafka(
+    void shouldTransformSensorMessageToSchemaV2AndPublishToKafka(
             String mqttTopic,
             String kafkaTopic,
             String payload,
             String sensorType
     ) throws Exception {
+        String sensorId = objectMapper.readTree(payload).get("sensorId").asText();
+
         consumer.subscribe(Collections.singletonList(kafkaTopic));
 
         consumer.poll(Duration.ofSeconds(1));
 
-        publisher.publishWith()
-                .topic(mqttTopic)
-                .payload(payload.getBytes(StandardCharsets.UTF_8))
-                .send()
-                .join();
+        publish(mqttTopic, payload);
 
-        ConsumerRecord<String, String> record = awaitKafkaRecord(kafkaTopic);
+        ConsumerRecord<String, String> record = awaitKafkaRecord(kafkaTopic, sensorId);
 
         JsonNode message = objectMapper.readTree(record.value());
 
         assertThat(record.topic()).isEqualTo(kafkaTopic);
-        assertThat(record.key()).isEqualTo(mqttTopic.equals("home/gateway/status") ? "gateway" : "kitchen");
-        assertThat(message.get("schemaVersion").asInt()).isEqualTo(1);
-        assertThat(message.get("roomId").asText()).isEqualTo(mqttTopic.equals("home/gateway/status") ? "gateway" : "kitchen");
+        assertThat(record.key()).isEqualTo(sensorId);
+        assertThat(message.get("schemaVersion").asInt()).isEqualTo(2);
+        assertThat(message.get("sensorId").asText()).isEqualTo(sensorId);
+        assertThat(message.has("roomId")).isFalse();
+        assertThat(message.has("deviceId")).isFalse();
         assertThat(message.get("type").asText()).isEqualTo(sensorType);
+        assertThat(message.get("observedAt")).isNotNull();
+        assertThat(message.get("receivedAt")).isNotNull();
+        assertThat(message.get("values")).isNotNull();
+        assertThat(message.get("values").has("sensorId")).isFalse();
+        assertThat(message.get("values").has("timestamp")).isFalse();
+    }
+
+    @Test
+    void shouldKeepStatusAsSchemaV1() throws Exception {
+        consumer.subscribe(Collections.singletonList("status-data"));
+
+        consumer.poll(Duration.ofSeconds(1));
+
+        publish("home/gateway/status", "{\"status\":\"ONLINE\"}");
+
+        ConsumerRecord<String, String> record = awaitKafkaRecord("status-data", null);
+
+        JsonNode message = objectMapper.readTree(record.value());
+
+        assertThat(record.key()).isEqualTo("gateway");
+        assertThat(message.get("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(message.get("roomId").asText()).isEqualTo("gateway");
+        assertThat(message.has("sensorId")).isFalse();
+        assertThat(message.get("type").asText()).isEqualTo("STATUS");
         assertThat(message.get("observedAt")).isNotNull();
         assertThat(message.get("receivedAt")).isNotNull();
         assertThat(message.get("values")).isNotNull();
     }
 
-    private ConsumerRecord<String, String> awaitKafkaRecord(String topic) {
+    private void publish(String topic, String payload) {
+        publisher.publishWith()
+                .topic(topic)
+                .payload(payload.getBytes(StandardCharsets.UTF_8))
+                .send()
+                .join();
+    }
+
+    private ConsumerRecord<String, String> awaitKafkaRecord(String topic, String expectedKey) {
         final ConsumerRecord<?, ?>[] result = new ConsumerRecord<?, ?>[1];
 
         await()
@@ -110,7 +142,7 @@ class KafkaIntegrationIT {
                     var records = consumer.poll(Duration.ofMillis(500));
 
                     for (ConsumerRecord<String, String> record : records) {
-                        if (record.topic().equals(topic)) {
+                        if (record.topic().equals(topic) && (expectedKey == null || expectedKey.equals(record.key()))) {
                             result[0] = record;
                             return true;
                         }

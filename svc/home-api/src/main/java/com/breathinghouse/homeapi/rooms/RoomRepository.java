@@ -1,17 +1,23 @@
 package com.breathinghouse.homeapi.rooms;
 
 import org.springframework.dao.DataAccessException;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Repository
 public class RoomRepository {
+
+    private record RoomRow(String roomId, String name, String description) {
+    }
 
     private final NamedParameterJdbcTemplate jdbc;
 
@@ -21,7 +27,8 @@ public class RoomRepository {
 
     public boolean isReady() {
         try {
-            jdbc.getJdbcTemplate().queryForList("SELECT 1 FROM home_api.room_metadata LIMIT 0");
+            jdbc.getJdbcTemplate().queryForList("SELECT 1 FROM home_api.room LIMIT 0");
+            jdbc.getJdbcTemplate().queryForList("SELECT 1 FROM home_api.sensor LIMIT 0");
             return true;
         } catch (DataAccessException ex) {
             return false;
@@ -29,82 +36,104 @@ public class RoomRepository {
     }
 
     public List<RoomSummary> listRooms() {
-        String sql = """
-                SELECT rooms.room_id AS room_id,
-                       COALESCE(metadata.display_name, rooms.room_id) AS display_name
-                FROM (
-                  SELECT room_id FROM environment.environment_reading
-                  UNION
-                  SELECT room_id FROM occupancy.occupancy_event
-                ) rooms
-                LEFT JOIN home_api.room_metadata metadata ON metadata.room_id = rooms.room_id
-                ORDER BY rooms.room_id
-                """;
-        return jdbc.getJdbcTemplate().query(
-                sql,
-                (rs, rowNum) -> new RoomSummary(rs.getString("room_id"), rs.getString("display_name")));
+        List<RoomRow> rows = jdbc.getJdbcTemplate().query(
+                """
+                SELECT room_id, name, description
+                FROM home_api.room
+                ORDER BY name, room_id
+                """,
+                (rs, rowNum) -> new RoomRow(
+                        rs.getString("room_id"),
+                        rs.getString("name"),
+                        rs.getString("description")));
+
+        Map<String, List<String>> sensorIdsByRoom = new HashMap<>();
+        jdbc.getJdbcTemplate().query(
+                """
+                SELECT room_id, sensor_id
+                FROM home_api.sensor
+                WHERE room_id IS NOT NULL
+                ORDER BY sensor_id
+                """,
+                rs -> {
+                    sensorIdsByRoom
+                            .computeIfAbsent(rs.getString("room_id"), key -> new ArrayList<>())
+                            .add(rs.getString("sensor_id"));
+                });
+
+        return rows.stream()
+                .map(row -> new RoomSummary(
+                        row.roomId(),
+                        row.name(),
+                        row.description(),
+                        sensorIdsByRoom.getOrDefault(row.roomId(), List.of())))
+                .toList();
     }
 
-    public boolean existsInHistory(String roomId) {
-        String sql = """
-                SELECT (
-                  EXISTS (SELECT 1 FROM environment.environment_reading WHERE room_id = :roomId)
-                  OR EXISTS (SELECT 1 FROM occupancy.occupancy_event WHERE room_id = :roomId)
-                )
-                """;
-        Boolean exists = jdbc.queryForObject(sql, new MapSqlParameterSource("roomId", roomId), Boolean.class);
-        return Boolean.TRUE.equals(exists);
+    public Optional<RoomSummary> findById(String roomId) {
+        MapSqlParameterSource params = new MapSqlParameterSource("roomId", roomId);
+        return jdbc.query(
+                        """
+                        SELECT room_id, name, description
+                        FROM home_api.room
+                        WHERE room_id = :roomId
+                        """,
+                        params,
+                        (rs, rowNum) -> new RoomRow(
+                                rs.getString("room_id"),
+                                rs.getString("name"),
+                                rs.getString("description")))
+                .stream()
+                .findFirst()
+                .map(row -> new RoomSummary(
+                        row.roomId(),
+                        row.name(),
+                        row.description(),
+                        sensorIdsOf(roomId)));
     }
 
-    public void upsertDisplayName(String roomId, String displayName, Instant updatedAt) {
-        MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("roomId", roomId)
-                .addValue("displayName", displayName)
-                .addValue("updatedAt", Timestamp.from(updatedAt));
-
-        // Prefer PostgreSQL upsert; fall back for H2 test mode which lacks ON CONFLICT.
-        try {
-            jdbc.update("""
-                    INSERT INTO home_api.room_metadata (room_id, display_name, updated_at)
-                    VALUES (:roomId, :displayName, :updatedAt)
-                    ON CONFLICT (room_id) DO UPDATE
-                    SET display_name = EXCLUDED.display_name,
-                        updated_at = EXCLUDED.updated_at
-                    """, params);
-        } catch (DataAccessException ex) {
-            if (!isUnsupportedOnConflict(ex)) {
-                throw ex;
-            }
-            upsertWithoutOnConflict(params);
-        }
+    public boolean exists(String roomId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM home_api.room WHERE room_id = :roomId",
+                new MapSqlParameterSource("roomId", roomId),
+                Integer.class);
+        return count != null && count > 0;
     }
 
-    private void upsertWithoutOnConflict(MapSqlParameterSource params) {
-        int updated = jdbc.update("""
-                UPDATE home_api.room_metadata
-                SET display_name = :displayName, updated_at = :updatedAt
+    public void insert(String roomId, String name, String description, Instant now) {
+        jdbc.update("""
+                INSERT INTO home_api.room (room_id, name, description, created_at, updated_at)
+                VALUES (:roomId, :name, :description, :now, :now)
+                """,
+                new MapSqlParameterSource()
+                        .addValue("roomId", roomId)
+                        .addValue("name", name)
+                        .addValue("description", description)
+                        .addValue("now", Timestamp.from(now)));
+    }
+
+    public int update(String roomId, String name, String description, Instant now) {
+        return jdbc.update("""
+                UPDATE home_api.room
+                SET name = :name, description = :description, updated_at = :now
                 WHERE room_id = :roomId
-                """, params);
-        if (updated > 0) {
-            return;
-        }
-        try {
-            jdbc.update("""
-                    INSERT INTO home_api.room_metadata (room_id, display_name, updated_at)
-                    VALUES (:roomId, :displayName, :updatedAt)
-                    """, params);
-        } catch (DuplicateKeyException ex) {
-            jdbc.update("""
-                    UPDATE home_api.room_metadata
-                    SET display_name = :displayName, updated_at = :updatedAt
-                    WHERE room_id = :roomId
-                    """, params);
-        }
+                """,
+                new MapSqlParameterSource()
+                        .addValue("roomId", roomId)
+                        .addValue("name", name)
+                        .addValue("description", description)
+                        .addValue("now", Timestamp.from(now)));
     }
 
-    private static boolean isUnsupportedOnConflict(DataAccessException ex) {
-        Throwable cause = ex.getMostSpecificCause();
-        String message = cause.getMessage();
-        return message != null && message.contains("ON CONFLICT");
+    private List<String> sensorIdsOf(String roomId) {
+        return jdbc.queryForList(
+                """
+                SELECT sensor_id
+                FROM home_api.sensor
+                WHERE room_id = :roomId
+                ORDER BY sensor_id
+                """,
+                new MapSqlParameterSource("roomId", roomId),
+                String.class);
     }
 }

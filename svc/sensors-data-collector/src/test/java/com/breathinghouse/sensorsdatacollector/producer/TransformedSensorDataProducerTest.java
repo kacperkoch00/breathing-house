@@ -62,16 +62,17 @@ class TransformedSensorDataProducerTest {
             "PRESENCE, event-data",
             "STATUS, status-data"
     })
-    void shouldSendDataToCorrectTopic(SensorType type, String expectedTopic) {
+    void shouldSendDataToCorrectTopicKeyedBySensorIdOrGatewayForStatus(SensorType type, String expectedTopic) {
         Instant now = Instant.now();
-        SensorData sensorData = new SensorData(SensorData.SCHEMA_VERSION, "kitchen", null, type, now, now, Map.of());
+        SensorData sensorData = sensorDataFor(type, now);
+        String expectedKey = type == SensorType.STATUS ? "gateway" : "sensor-1";
         SendResult<String, SensorData> sendResult = successfulSendResult(expectedTopic);
         when(kafkaTemplate.send(anyString(), anyString(), any(SensorData.class)))
                 .thenReturn(CompletableFuture.completedFuture(sendResult));
 
         producer.send(sensorData);
 
-        verify(kafkaTemplate).send(expectedTopic, "kitchen", sensorData);
+        verify(kafkaTemplate).send(expectedTopic, expectedKey, sensorData);
         assertEquals(1.0, meterRegistry.counter(SensorMetrics.PUBLISHED, "type", type.name()).count());
         assertEquals(0.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "sensor").count());
     }
@@ -79,15 +80,22 @@ class TransformedSensorDataProducerTest {
     @Test
     void shouldNotThrowWhenSendFutureFails() {
         Instant now = Instant.now();
-        SensorData sensorData = new SensorData(SensorData.SCHEMA_VERSION, "kitchen", null, SensorType.ROOM, now, now, Map.of());
-        when(kafkaTemplate.send(eq("sensor-data"), eq("kitchen"), eq(sensorData)))
+        SensorData sensorData = sensorDataFor(SensorType.ROOM, now);
+        when(kafkaTemplate.send(eq("sensor-data"), eq("sensor-1"), eq(sensorData)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker unavailable")));
 
         assertDoesNotThrow(() -> producer.send(sensorData));
 
-        verify(kafkaTemplate).send("sensor-data", "kitchen", sensorData);
+        verify(kafkaTemplate).send("sensor-data", "sensor-1", sensorData);
         assertEquals(1.0, meterRegistry.counter(SensorMetrics.PUBLISH_FAILED, "kind", "sensor").count());
         assertEquals(0.0, meterRegistry.counter(SensorMetrics.PUBLISHED, "type", "ROOM").count());
+    }
+
+    private static SensorData sensorDataFor(SensorType type, Instant now) {
+        if (type == SensorType.STATUS) {
+            return new SensorData(SensorData.STATUS_SCHEMA_VERSION, null, "gateway", null, type, now, now, Map.of());
+        }
+        return new SensorData(SensorData.SCHEMA_VERSION, "sensor-1", null, null, type, now, now, Map.of());
     }
 
     @SuppressWarnings("unchecked")

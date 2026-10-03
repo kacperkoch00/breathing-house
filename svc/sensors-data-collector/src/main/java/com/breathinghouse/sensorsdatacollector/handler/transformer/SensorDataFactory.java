@@ -2,46 +2,72 @@ package com.breathinghouse.sensorsdatacollector.handler.transformer;
 
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
-import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 final class SensorDataFactory {
 
     private static final double EPOCH_MILLIS_THRESHOLD = 1e12;
 
+    private static final Set<String> ENVELOPE_FIELDS = Set.of(
+            "schemaVersion",
+            "sensorId",
+            "roomId",
+            "deviceId",
+            "type",
+            "timestamp",
+            "observedAt",
+            "receivedAt"
+    );
+
     private SensorDataFactory() {
     }
 
-    static SensorData create(String roomId, SensorType type, Map<String, Object> values) {
+    /** Schema-v2 envelope: identified by {@code sensorId}, no room or device identity. */
+    static SensorData createSensorData(
+            SensorType type,
+            String sensorId,
+            Object timestamp,
+            Map<String, Object> values
+    ) {
         Instant receivedAt = Instant.now();
-        Instant observedAt = resolveObservedAt(values.get("timestamp"), receivedAt);
-        String deviceId = resolveDeviceId(values.get("deviceId"));
+        Instant observedAt = resolveObservedAt(timestamp, receivedAt);
         return new SensorData(
                 SensorData.SCHEMA_VERSION,
+                sensorId,
+                null,
+                null,
+                type,
+                observedAt,
+                receivedAt,
+                withoutEnvelopeFields(values)
+        );
+    }
+
+    /** Schema-v1 status envelope: keeps {@code roomId} / {@code deviceId} as before. */
+    static SensorData createStatus(String roomId, Map<String, Object> values) {
+        Instant receivedAt = Instant.now();
+        Instant observedAt = resolveObservedAt(values.get("timestamp"), receivedAt);
+        String deviceId = values.get("deviceId") instanceof String text ? text : null;
+        return new SensorData(
+                SensorData.STATUS_SCHEMA_VERSION,
+                null,
                 roomId,
                 deviceId,
-                type,
+                SensorType.STATUS,
                 observedAt,
                 receivedAt,
                 values
         );
     }
 
-    static SensorData create(String roomId, SensorType type, JsonNode root, Map<String, Object> values) {
-        Instant receivedAt = Instant.now();
-        Instant observedAt = resolveObservedAt(root.get("timestamp"), receivedAt);
-        String deviceId = resolveDeviceId(root.get("deviceId"));
-        return new SensorData(
-                SensorData.SCHEMA_VERSION,
-                roomId,
-                deviceId,
-                type,
-                observedAt,
-                receivedAt,
-                values
-        );
+    private static Map<String, Object> withoutEnvelopeFields(Map<String, Object> values) {
+        Map<String, Object> result = new HashMap<>(values);
+        result.keySet().removeAll(ENVELOPE_FIELDS);
+        return result;
     }
 
     private static Instant resolveObservedAt(Object timestamp, Instant fallback) {
@@ -63,40 +89,10 @@ final class SensorDataFactory {
         return fallback;
     }
 
-    private static Instant resolveObservedAt(JsonNode timestamp, Instant fallback) {
-        if (timestamp == null || timestamp.isNull() || timestamp.isMissingNode()) {
-            return fallback;
-        }
-
-        try {
-            if (timestamp.isNumber()) {
-                return fromEpochNumber(timestamp.asDouble());
-            }
-            if (timestamp.isTextual()) {
-                return Instant.parse(timestamp.asText());
-            }
-        } catch (RuntimeException ignored) {
-            // treat unparseable timestamp as missing
-        }
-
-        return fallback;
-    }
-
     private static Instant fromEpochNumber(double epoch) {
         if (epoch > EPOCH_MILLIS_THRESHOLD) {
             return Instant.ofEpochMilli((long) epoch);
         }
         return Instant.ofEpochSecond((long) epoch);
-    }
-
-    private static String resolveDeviceId(Object deviceId) {
-        return deviceId instanceof String text ? text : null;
-    }
-
-    private static String resolveDeviceId(JsonNode deviceId) {
-        if (deviceId != null && deviceId.isTextual()) {
-            return deviceId.asText();
-        }
-        return null;
     }
 }

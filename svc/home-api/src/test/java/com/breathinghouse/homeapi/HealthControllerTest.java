@@ -88,7 +88,7 @@ class HealthControllerTest {
     }
 
     @Test
-    void getReadyReturns503WhenRoomMetadataUnavailable() throws Exception {
+    void getReadyReturns503WhenRoomOrSensorTablesUnavailable() throws Exception {
         when(historyRepository.isReady()).thenReturn(true);
         when(alertRepository.isReady()).thenReturn(true);
         when(gatewayHeartbeatRepository.isReady()).thenReturn(true);

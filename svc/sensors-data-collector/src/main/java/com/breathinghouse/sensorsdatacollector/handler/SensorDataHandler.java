@@ -73,8 +73,8 @@ public class SensorDataHandler {
         }
 
         log.debug(
-                "Processing MQTT message. Room ID: {}, Sensor Type: {}, Payload: {}",
-                sensorTopic.roomId(),
+                "Processing MQTT message. Topic: {}, Sensor Type: {}, Payload: {}",
+                topic,
                 sensorType,
                 payload
         );
@@ -85,8 +85,8 @@ public class SensorDataHandler {
             transformedSensorDataProducer.send(transformer.transform(payload, sensorTopic.roomId()));
         } catch (InvalidSensorPayloadException e) {
             log.warn(
-                    "Ignoring invalid sensor payload. Room ID: {}, Sensor Type: {}, Reason: {}, Payload: {}",
-                    sensorTopic.roomId(),
+                    "Ignoring invalid sensor payload. Topic: {}, Sensor Type: {}, Reason: {}, Payload: {}",
+                    topic,
                     sensorType,
                     e.getMessage(),
                     payload

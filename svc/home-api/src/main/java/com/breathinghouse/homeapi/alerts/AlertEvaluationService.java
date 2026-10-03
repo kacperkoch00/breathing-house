@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -99,7 +100,7 @@ public class AlertEvaluationService {
             evaluateInstance(
                     rule,
                     snapshot.roomId(),
-                    snapshot.deviceId(),
+                    snapshot.sensorId(),
                     result.matched(),
                     result.value(),
                     snapshot.observedAt(),
@@ -123,7 +124,7 @@ public class AlertEvaluationService {
             evaluateInstance(
                     rule,
                     snapshot.roomId(),
-                    snapshot.deviceId(),
+                    snapshot.sensorId(),
                     result.matched(),
                     result.value(),
                     snapshot.observedAt(),
@@ -135,7 +136,38 @@ public class AlertEvaluationService {
     private void evaluateComposite(ValidatedRule rule, Instant now) {
         Map<SensorType, List<EnvironmentSnapshot>> environmentByType = new HashMap<>();
         Map<EventType, List<OccupancySnapshot>> occupancyByType = new HashMap<>();
+        loadCompositeInputs(rule, environmentByType, occupancyByType);
 
+        for (String roomId : candidateRooms(rule, environmentByType, occupancyByType)) {
+            evaluateCompositeRoom(rule, roomId, environmentByType, occupancyByType, now);
+        }
+    }
+
+    /**
+     * Re-evaluates composite rules for specific rooms right away, for example after a sensor left
+     * a room, so alerts that depended on that sensor do not wait for the next scheduled cycle.
+     */
+    public void reevaluateCompositeRooms(Validated configuration, Collection<String> roomIds) {
+        Instant now = clock.instant();
+        for (ValidatedRule rule : configuration.alerts()) {
+            if (!rule.enabled() || rule.type() != RuleType.COMPOSITE) {
+                continue;
+            }
+            Map<SensorType, List<EnvironmentSnapshot>> environmentByType = new HashMap<>();
+            Map<EventType, List<OccupancySnapshot>> occupancyByType = new HashMap<>();
+            loadCompositeInputs(rule, environmentByType, occupancyByType);
+            for (String roomId : roomIds) {
+                if (rule.appliesTo(roomId)) {
+                    evaluateCompositeRoom(rule, roomId, environmentByType, occupancyByType, now);
+                }
+            }
+        }
+    }
+
+    private void loadCompositeInputs(
+            ValidatedRule rule,
+            Map<SensorType, List<EnvironmentSnapshot>> environmentByType,
+            Map<EventType, List<OccupancySnapshot>> occupancyByType) {
         for (ValidatedCondition condition : rule.conditions()) {
             if (condition.type() == RuleType.THRESHOLD) {
                 environmentByType.computeIfAbsent(
@@ -145,52 +177,57 @@ public class AlertEvaluationService {
                         condition.eventType(), repository::latestOccupancy);
             }
         }
+    }
 
-        for (String roomId : candidateRooms(rule, environmentByType, occupancyByType)) {
-            Map<String, String> trueValues = new LinkedHashMap<>();
-            Instant latestTrueObservedAt = null;
-            Instant earliestTrueObservedAt = null;
-            int trueCount = 0;
+    private void evaluateCompositeRoom(
+            ValidatedRule rule,
+            String roomId,
+            Map<SensorType, List<EnvironmentSnapshot>> environmentByType,
+            Map<EventType, List<OccupancySnapshot>> occupancyByType,
+            Instant now) {
+        Map<String, String> trueValues = new LinkedHashMap<>();
+        Instant latestTrueObservedAt = null;
+        Instant earliestTrueObservedAt = null;
+        int trueCount = 0;
 
-            for (ValidatedCondition condition : rule.conditions()) {
-                LeafObservation observation = observeCondition(
-                        condition, roomId, environmentByType, occupancyByType, now);
-                if (!observation.result().matched()) {
-                    continue;
+        for (ValidatedCondition condition : rule.conditions()) {
+            LeafObservation observation = observeCondition(
+                    condition, roomId, environmentByType, occupancyByType, now);
+            if (!observation.result().matched()) {
+                continue;
+            }
+            trueCount++;
+            if (observation.result().value() != null) {
+                trueValues.put(condition.id(), observation.result().value());
+            }
+            Instant observedAt = observation.observedAt();
+            if (observedAt != null) {
+                if (latestTrueObservedAt == null || observedAt.isAfter(latestTrueObservedAt)) {
+                    latestTrueObservedAt = observedAt;
                 }
-                trueCount++;
-                if (observation.result().value() != null) {
-                    trueValues.put(condition.id(), observation.result().value());
-                }
-                Instant observedAt = observation.observedAt();
-                if (observedAt != null) {
-                    if (latestTrueObservedAt == null || observedAt.isAfter(latestTrueObservedAt)) {
-                        latestTrueObservedAt = observedAt;
-                    }
-                    if (earliestTrueObservedAt == null || observedAt.isBefore(earliestTrueObservedAt)) {
-                        earliestTrueObservedAt = observedAt;
-                    }
+                if (earliestTrueObservedAt == null || observedAt.isBefore(earliestTrueObservedAt)) {
+                    earliestTrueObservedAt = observedAt;
                 }
             }
-
-            boolean combined = rule.combinator() == Combinator.ALL
-                    ? trueCount == rule.conditions().size()
-                    : trueCount > 0;
-            Instant suggestedStart = rule.combinator() == Combinator.ALL
-                    ? latestTrueObservedAt
-                    : earliestTrueObservedAt;
-            String triggerValue = combined ? serializeValues(trueValues) : null;
-
-            evaluateInstance(
-                    rule,
-                    roomId,
-                    null,
-                    combined,
-                    triggerValue,
-                    suggestedStart,
-                    rule.holdDuration(),
-                    now);
         }
+
+        boolean combined = rule.combinator() == Combinator.ALL
+                ? trueCount == rule.conditions().size()
+                : trueCount > 0;
+        Instant suggestedStart = rule.combinator() == Combinator.ALL
+                ? latestTrueObservedAt
+                : earliestTrueObservedAt;
+        String triggerValue = combined ? serializeValues(trueValues) : null;
+
+        evaluateInstance(
+                rule,
+                roomId,
+                null,
+                combined,
+                triggerValue,
+                suggestedStart,
+                rule.holdDuration(),
+                now);
     }
 
     private Set<String> candidateRooms(
@@ -304,7 +341,7 @@ public class AlertEvaluationService {
                     evaluateStaleInstance(
                             rule,
                             snapshot.roomId(),
-                            snapshot.deviceId(),
+                            snapshot.sensorId(),
                             snapshot.observedAt(),
                             now);
                 }
@@ -318,7 +355,7 @@ public class AlertEvaluationService {
                 evaluateStaleInstance(
                         rule,
                         snapshot.roomId(),
-                        snapshot.deviceId(),
+                        snapshot.sensorId(),
                         snapshot.observedAt(),
                         now);
             }
@@ -328,7 +365,7 @@ public class AlertEvaluationService {
     private void evaluateStaleInstance(
             ValidatedRule rule,
             String roomId,
-            String deviceId,
+            String sensorId,
             Instant observedAt,
             Instant now) {
         Duration age = Duration.between(observedAt, now);
@@ -336,7 +373,7 @@ public class AlertEvaluationService {
         evaluateInstance(
                 rule,
                 roomId,
-                deviceId,
+                sensorId,
                 stale,
                 Long.toString(Math.max(0, age.toSeconds())),
                 observedAt,
@@ -347,22 +384,22 @@ public class AlertEvaluationService {
     private void evaluateInstance(
             ValidatedRule rule,
             String roomId,
-            String deviceId,
+            String sensorId,
             boolean condition,
             String value,
             Instant suggestedConditionStart,
             Duration activationDelay,
             Instant now) {
         String ruleFingerprint = serializeRule(rule);
-        AlertState previous = repository.findState(rule.id(), roomId, deviceId).orElse(null);
+        AlertState previous = repository.findState(rule.id(), roomId, sensorId).orElse(null);
         if (previous != null && !ruleFingerprint.equals(previous.ruleFingerprint())) {
             previous = null;
         }
 
         if (!condition) {
             repository.saveState(new AlertState(
-                    rule.id(), roomId, deviceId, false, null, value, ruleFingerprint, now));
-            repository.resolveActiveAlert(rule.id(), roomId, deviceId, now);
+                    rule.id(), roomId, sensorId, false, null, value, ruleFingerprint, now));
+            repository.resolveActiveAlert(rule.id(), roomId, sensorId, now);
             return;
         }
 
@@ -374,38 +411,39 @@ public class AlertEvaluationService {
         }
 
         repository.saveState(new AlertState(
-                rule.id(), roomId, deviceId, true, conditionStartedAt, value, ruleFingerprint, now));
+                rule.id(), roomId, sensorId, true, conditionStartedAt, value, ruleFingerprint, now));
 
         if (now.isBefore(conditionStartedAt.plus(activationDelay))) {
             return;
         }
 
-        if (repository.hasActiveAlert(rule.id(), roomId, deviceId)) {
-            repository.touchActiveAlert(rule.id(), roomId, deviceId, now);
+        if (repository.hasActiveAlert(rule.id(), roomId, sensorId)) {
+            repository.touchActiveAlert(rule.id(), roomId, sensorId, now);
             return;
         }
 
         repository.createAlert(
                 rule,
                 roomId,
-                deviceId,
-                renderMessage(rule, roomId, deviceId, value),
+                sensorId,
+                renderMessage(rule, roomId, sensorId, value),
                 value,
                 now,
                 ruleFingerprint);
         log.info(
-                "activated alert rule={} room={} device={} severity={}",
+                "activated alert rule={} room={} sensor={} severity={}",
                 rule.id(),
                 roomId,
-                deviceId,
+                sensorId,
                 rule.severity());
     }
 
-    private String renderMessage(ValidatedRule rule, String roomId, String deviceId, String value) {
+    private String renderMessage(ValidatedRule rule, String roomId, String sensorId, String value) {
         String values = rule.type() == RuleType.COMPOSITE && value != null ? value : "";
         return rule.message()
                 .replace("{{roomId}}", roomId)
-                .replace("{{deviceId}}", deviceId == null ? "" : deviceId)
+                .replace("{{sensorId}}", sensorId == null ? "" : sensorId)
+                .replace("{{deviceId}}", sensorId == null ? "" : sensorId)
                 .replace("{{value}}", value == null ? "" : value)
                 .replace("{{values}}", values)
                 .replace("{{threshold}}", rule.threshold() == null ? "" : formatNumber(rule.threshold()))

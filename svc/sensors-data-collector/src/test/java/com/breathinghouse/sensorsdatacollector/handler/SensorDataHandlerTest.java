@@ -26,6 +26,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -67,26 +68,54 @@ class SensorDataHandlerTest {
     })
     void shouldHandleAllSensorTypes(String sensorType) {
         Map<String, String> payloads = Map.of(
-                "room", "{\"temperature\":22.5,\"light\":250}",
-                "air", "{\"temperature\":22.5,\"humidity\":45,\"co2\":650}",
-                "opening", "{\"state\": \"open\"}",
-                "presence", "{\"presence\": \"detected\"}",
+                "room", "{\"sensorId\":\"s-1\",\"temperature\":22.5,\"light\":250}",
+                "air", "{\"sensorId\":\"s-1\",\"temperature\":22.5,\"humidity\":45,\"co2\":650}",
+                "opening", "{\"sensorId\":\"s-1\",\"state\": \"open\"}",
+                "presence", "{\"sensorId\":\"s-1\",\"presence\": \"detected\"}",
                 "status", "{\"status\":\"ONLINE\"}");
 
         assertDoesNotThrow(() ->
-                handler.handle(payloads.get(sensorType), "home/kitchen/" + sensorType)
+                handler.handle(payloads.get(sensorType), topicFor(sensorType))
         );
 
-        verify(producer).send(any(SensorData.class));
+        ArgumentCaptor<SensorData> captor = ArgumentCaptor.forClass(SensorData.class);
+        verify(producer).send(captor.capture());
+        SensorData sent = captor.getValue();
+        if ("status".equals(sensorType)) {
+            assertEquals(1, sent.schemaVersion());
+            assertNull(sent.sensorId());
+            assertEquals("gateway", sent.roomId());
+        } else {
+            assertEquals(2, sent.schemaVersion());
+            assertEquals("s-1", sent.sensorId());
+            assertNull(sent.roomId());
+            assertNull(sent.deviceId());
+        }
         verify(poisonMessageProducer, never()).send(any());
         assertEquals(1.0, meterRegistry.counter(SensorMetrics.RECEIVED, "type", SensorType.from(sensorType).name()).count());
         assertEquals(0.0, meterRegistry.counter(SensorMetrics.REJECTED, "type", SensorType.from(sensorType).name()).count());
     }
 
+    private static String topicFor(String sensorType) {
+        return "status".equals(sensorType) ? "home/gateway/status" : "home/sensors/" + sensorType;
+    }
+
+    @Test
+    void shouldRejectNonStatusPayloadWithoutSensorId() {
+        assertDoesNotThrow(() ->
+                handler.handle("{\"temperature\":22.5,\"humidity\":45,\"co2\":650}", "home/sensors/air")
+        );
+
+        verify(producer, never()).send(any());
+        ArgumentCaptor<PoisonMessage> captor = ArgumentCaptor.forClass(PoisonMessage.class);
+        verify(poisonMessageProducer).send(captor.capture());
+        assertEquals("Missing required field: sensorId", captor.getValue().reason());
+    }
+
     @Test
     void shouldPublishInvalidPayloadToDlq() {
         assertDoesNotThrow(() ->
-                handler.handle("{}", "home/kitchen/air")
+                handler.handle("{}", "home/sensors/air")
         );
 
         verify(producer, never()).send(any());
@@ -95,10 +124,10 @@ class SensorDataHandlerTest {
         verify(poisonMessageProducer).send(captor.capture());
 
         PoisonMessage poisonMessage = captor.getValue();
-        assertEquals("kitchen", poisonMessage.roomId());
+        assertNull(poisonMessage.roomId());
         assertEquals("AIR", poisonMessage.sensorType());
         assertEquals("{}", poisonMessage.payload());
-        assertEquals("home/kitchen/air", poisonMessage.mqttTopic());
+        assertEquals("home/sensors/air", poisonMessage.mqttTopic());
         assertFalse(poisonMessage.reason() == null || poisonMessage.reason().isBlank());
         assertEquals(1.0, meterRegistry.counter(SensorMetrics.RECEIVED, "type", "AIR").count());
         assertEquals(1.0, meterRegistry.counter(SensorMetrics.REJECTED, "type", "AIR").count());
@@ -109,9 +138,14 @@ class SensorDataHandlerTest {
             "",
             "invalid",
             "home",
-            "home/kitchen",
-            "sensors/kitchen/air",
-            "home/kitchen/air/invalid"
+            "home/sensors",
+            "home/kitchen/air",
+            "home/+/air",
+            "home/sensors/status",
+            "home/sensors/",
+            "home/gateway/room",
+            "sensors/sensors/air",
+            "home/sensors/air/invalid"
     })
     void shouldIgnoreInvalidTopics(String topic) {
         assertDoesNotThrow(() ->
@@ -129,7 +163,7 @@ class SensorDataHandlerTest {
     @Test
     void shouldIgnoreUnknownSensorType() {
         assertDoesNotThrow(() ->
-                handler.handle("{}", "home/kitchen/unknown")
+                handler.handle("{}", "home/sensors/unknown")
         );
 
         verify(producer, never()).send(any());
@@ -150,7 +184,8 @@ class SensorDataHandlerTest {
                 Instant now = Instant.now();
                 return new SensorData(
                         SensorData.SCHEMA_VERSION,
-                        roomId,
+                        "s-1",
+                        null,
                         null,
                         SensorType.ROOM,
                         now,
@@ -172,7 +207,7 @@ class SensorDataHandlerTest {
         );
 
         assertDoesNotThrow(() ->
-                handlerWithoutAir.handle("{}", "home/kitchen/air")
+                handlerWithoutAir.handle("{}", "home/sensors/air")
         );
 
         verify(producerWithoutAir, never()).send(any());

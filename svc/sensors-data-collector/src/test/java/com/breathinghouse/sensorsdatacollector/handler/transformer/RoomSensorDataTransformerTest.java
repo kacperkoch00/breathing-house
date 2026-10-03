@@ -30,16 +30,18 @@ class RoomSensorDataTransformerTest {
     void shouldTransformRoomSensorPayload() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "light": 320
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertNull(result.deviceId());
         assertEquals(SensorType.ROOM, result.type());
         assertNotNull(result.observedAt());
@@ -54,12 +56,13 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineDarkLightLevel() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 9.9
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals("DARK", result.values().get("lightLevel"));
     }
@@ -68,12 +71,13 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineDimLightLevel() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 10
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals("DIM", result.values().get("lightLevel"));
     }
@@ -82,12 +86,13 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineNormalLightLevel() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 100
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals("NORMAL", result.values().get("lightLevel"));
     }
@@ -96,12 +101,13 @@ class RoomSensorDataTransformerTest {
     void shouldDetermineBrightLightLevel() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 500
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals("BRIGHT", result.values().get("lightLevel"));
     }
@@ -110,6 +116,7 @@ class RoomSensorDataTransformerTest {
     void shouldThrowExceptionWhenLightMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2
                 }
@@ -117,7 +124,7 @@ class RoomSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Missing required field: light", exception.getMessage());
@@ -127,6 +134,7 @@ class RoomSensorDataTransformerTest {
     void shouldThrowExceptionWhenLightHasWrongType() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": "unknown"
                 }
@@ -134,7 +142,7 @@ class RoomSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Field 'light' must be a number", exception.getMessage());
@@ -144,6 +152,7 @@ class RoomSensorDataTransformerTest {
     void shouldThrowExceptionWhenTemperatureOutOfRange() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 100,
                     "light": 320
                 }
@@ -151,7 +160,7 @@ class RoomSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertTrue(exception.getMessage().contains("temperature"));
@@ -161,6 +170,7 @@ class RoomSensorDataTransformerTest {
     void shouldThrowExceptionWhenLightNegative() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": -1
                 }
@@ -168,7 +178,7 @@ class RoomSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertTrue(exception.getMessage().contains("light"));
@@ -178,6 +188,7 @@ class RoomSensorDataTransformerTest {
     void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 320,
                 }
@@ -185,7 +196,7 @@ class RoomSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Invalid room sensor payload", exception.getMessage());
@@ -196,13 +207,14 @@ class RoomSensorDataTransformerTest {
     void shouldUseObservedAtFromIsoTimestamp() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 320,
                     "timestamp": "2024-01-15T10:30:00Z"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
     }
@@ -211,13 +223,14 @@ class RoomSensorDataTransformerTest {
     void shouldUseObservedAtFromEpochMillis() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 320,
                     "timestamp": 1704312600000
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
     }
@@ -226,6 +239,7 @@ class RoomSensorDataTransformerTest {
     void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 320
                 }
@@ -233,7 +247,7 @@ class RoomSensorDataTransformerTest {
 
         Instant before = Instant.now();
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         Instant after = Instant.now();
 
@@ -244,17 +258,19 @@ class RoomSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetDeviceIdWhenPresent() {
+    void shouldNotExposeDeviceIdInEnvelope() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "light": 320,
                     "deviceId": "room-sensor-1"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("room-sensor-1", result.deviceId());
+        assertNull(result.deviceId());
+        assertFalse(result.values().containsKey("deviceId"));
     }
 }

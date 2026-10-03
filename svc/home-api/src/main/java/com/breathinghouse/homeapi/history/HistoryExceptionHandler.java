@@ -1,6 +1,8 @@
 package com.breathinghouse.homeapi.history;
 
 import com.breathinghouse.homeapi.rooms.RoomNotFoundException;
+import com.breathinghouse.homeapi.sensors.SensorAssignmentConflictException;
+import com.breathinghouse.homeapi.sensors.SensorNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,10 +35,16 @@ public class HistoryExceptionHandler {
                 .body(new ApiError("bad_request", safeMessage(ex)));
     }
 
-    @ExceptionHandler(RoomNotFoundException.class)
-    public ResponseEntity<ApiError> notFound(RoomNotFoundException ex) {
+    @ExceptionHandler({RoomNotFoundException.class, SensorNotFoundException.class})
+    public ResponseEntity<ApiError> notFound(RuntimeException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ApiError("not_found", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SensorAssignmentConflictException.class)
+    public ResponseEntity<ApiError> conflict(SensorAssignmentConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ApiError("conflict", ex.getMessage()));
     }
 
     @ExceptionHandler(DataAccessException.class)

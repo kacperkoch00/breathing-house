@@ -4,7 +4,7 @@ import com.breathinghouse.sensorsdatacollector.handler.InvalidSensorPayloadExcep
 import com.breathinghouse.sensorsdatacollector.handler.SensorData;
 import com.breathinghouse.sensorsdatacollector.handler.SensorType;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,15 +33,16 @@ public class OpeningSensorDataTransformer implements SensorDataTransformer {
 
     @Override
     public SensorData transform(String payload, String roomId) {
-        log.debug("Transforming opening sensor payload {} for room: {}", payload, roomId);
+        log.debug("Transforming opening sensor payload {}", payload);
 
         try {
-            JsonNode root = objectMapper.readTree(payload);
+            Map<String, Object> root = objectMapper.readValue(payload, new TypeReference<>() {});
+            String sensorId = PayloadRules.requireSensorId(root);
             String state = PayloadRules.requireNonBlank(root, "state");
-            return SensorDataFactory.create(
-                    roomId,
+            return SensorDataFactory.createSensorData(
                     SensorType.OPENING,
-                    root,
+                    sensorId,
+                    root.get("timestamp"),
                     Map.of("open", isOpen(state))
             );
         } catch (JsonProcessingException e) {

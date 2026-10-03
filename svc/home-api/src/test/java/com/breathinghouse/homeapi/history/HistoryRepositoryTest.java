@@ -105,6 +105,59 @@ class HistoryRepositoryTest {
     }
 
     @Test
+    void mapsSensorIdAndFallsBackToLegacyDeviceId() {
+        jdbcTemplate.update("""
+                INSERT INTO environment.environment_reading (
+                  room_id, device_id, sensor_id, sensor_type, co2, observed_at, received_at
+                ) VALUES ('living-room', 'legacy-1', NULL, 'AIR', 500, ?, ?),
+                         ('living-room', 'legacy-1', 'sensor-9', 'AIR', 600, ?, ?),
+                         ('living-room', NULL, NULL, 'AIR', 700, ?, ?)
+                """,
+                Instant.parse("2026-10-03T08:00:00Z"), Instant.parse("2026-10-03T08:00:00Z"),
+                Instant.parse("2026-10-03T09:00:00Z"), Instant.parse("2026-10-03T09:00:00Z"),
+                Instant.parse("2026-10-03T10:00:00Z"), Instant.parse("2026-10-03T10:00:00Z"));
+
+        PageResponse<EnvironmentReading> page = historyRepository.findEnvironmentReadings(
+                "living-room", null, null, null, 100, 0);
+
+        assertThat(page.items()).extracting(EnvironmentReading::sensorId)
+                .containsExactly(null, "sensor-9", "legacy-1");
+    }
+
+    @Test
+    void occupancyFallsBackToLegacyDeviceId() {
+        jdbcTemplate.update("""
+                INSERT INTO occupancy.occupancy_event (
+                  room_id, device_id, sensor_id, event_type, present, observed_at, received_at
+                ) VALUES ('kitchen', 'legacy-door', NULL, 'PRESENCE', true, ?, ?)
+                """, Instant.parse("2026-10-03T08:00:00Z"), Instant.parse("2026-10-03T08:00:00Z"));
+
+        PageResponse<OccupancyEvent> page = historyRepository.findOccupancyEvents(
+                "kitchen", null, null, null, 100, 0);
+
+        assertThat(page.items()).extracting(OccupancyEvent::sensorId).containsExactly("legacy-door");
+    }
+
+    @Test
+    void readingsStayUnderTheirSnapshottedRoomAndUnassignedRowsAreOmitted() {
+        insertEnvironment("old-room", "AIR", "2026-10-03T08:00:00Z", null, null, 700.0, null, null);
+        insertEnvironment("new-room", "AIR", "2026-10-03T09:00:00Z", null, null, 800.0, null, null);
+        insertEnvironment(null, "AIR", "2026-10-03T10:00:00Z", null, null, 900.0, null, null);
+        insertOccupancy("old-room", "PRESENCE", true, null, "2026-10-03T08:00:00Z");
+        insertOccupancy("new-room", "PRESENCE", false, null, "2026-10-03T09:00:00Z");
+        insertOccupancy(null, "PRESENCE", true, null, "2026-10-03T10:00:00Z");
+
+        assertThat(historyRepository.findEnvironmentReadings("old-room", null, null, null, 100, 0).items())
+                .extracting(EnvironmentReading::co2).containsExactly(700.0);
+        assertThat(historyRepository.findEnvironmentReadings("new-room", null, null, null, 100, 0).items())
+                .extracting(EnvironmentReading::co2).containsExactly(800.0);
+        assertThat(historyRepository.findOccupancyEvents("old-room", null, null, null, 100, 0).items())
+                .extracting(OccupancyEvent::present).containsExactly(true);
+        assertThat(historyRepository.findOccupancyEvents("new-room", null, null, null, 100, 0).items())
+                .extracting(OccupancyEvent::present).containsExactly(false);
+    }
+
+    @Test
     void isReadyWhenTablesExist() {
         assertThat(historyRepository.isReady()).isTrue();
     }
@@ -120,12 +173,12 @@ class HistoryRepositoryTest {
             String lightLevel) {
         jdbcTemplate.update("""
                 INSERT INTO environment.environment_reading (
-                  room_id, device_id, sensor_type, temperature, humidity, co2, light, light_level,
+                  room_id, sensor_id, sensor_type, temperature, humidity, co2, light, light_level,
                   observed_at, received_at, ingested_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 roomId,
-                "device-1",
+                "sensor-1",
                 sensorType,
                 temperature,
                 humidity,
@@ -145,12 +198,12 @@ class HistoryRepositoryTest {
             String observedAt) {
         jdbcTemplate.update("""
                 INSERT INTO occupancy.occupancy_event (
-                  room_id, device_id, event_type, present, open,
+                  room_id, sensor_id, event_type, present, open,
                   observed_at, received_at, ingested_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 roomId,
-                "device-1",
+                "sensor-1",
                 eventType,
                 present,
                 open,

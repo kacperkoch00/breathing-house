@@ -36,10 +36,11 @@ public class AirSensorDataTransformer implements SensorDataTransformer {
 
     @Override
     public SensorData transform(String payload, String roomId) {
-        log.debug("Transforming air sensor payload {} for room: {}", payload, roomId);
+        log.debug("Transforming air sensor payload {}", payload);
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
+            String sensorId = PayloadRules.requireSensorId(values);
 
             double temperature = PayloadRules.requireNumber(values, "temperature");
             PayloadRules.requireInRange(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, "temperature");
@@ -50,7 +51,7 @@ public class AirSensorDataTransformer implements SensorDataTransformer {
             double co2 = PayloadRules.requireNumber(values, "co2");
             PayloadRules.requireInRange(co2, CO2_MIN, CO2_MAX, "co2");
 
-            return SensorDataFactory.create(roomId, SensorType.AIR, values);
+            return SensorDataFactory.createSensorData(SensorType.AIR, sensorId, values.get("timestamp"), values);
         } catch (JsonProcessingException e) {
             throw new InvalidSensorPayloadException("Invalid air sensor payload", e);
         }

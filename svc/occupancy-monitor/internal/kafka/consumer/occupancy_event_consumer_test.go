@@ -27,6 +27,15 @@ const validPresencePayload = `{
 	"values": {"present": true}
 }`
 
+const validPresenceV2Payload = `{
+	"schemaVersion": 2,
+	"sensorId": "presence-1",
+	"type": "PRESENCE",
+	"observedAt": "2026-10-03T08:00:00Z",
+	"receivedAt": "2026-10-03T08:00:01Z",
+	"values": {"present": true}
+}`
+
 func newTestKafkaMetrics() *metrics.Kafka {
 	return metrics.NewKafka(prometheus.NewRegistry())
 }
@@ -193,6 +202,158 @@ func TestProcessFetchesPersistsAndCommits(t *testing.T) {
 	}
 	if !readiness.IsReady() {
 		t.Fatal("readiness = false, want true")
+	}
+}
+
+func TestProcessFetchesAcceptsSchemaV1AndV2(t *testing.T) {
+	store := &mockStore{}
+	var committed []int64
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			for _, r := range records {
+				committed = append(committed, r.Offset)
+			}
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{
+			{Topic: "event-data", Partition: 0, Offset: 1, Value: []byte(validPresencePayload)},
+			{Topic: "event-data", Partition: 0, Offset: 2, Value: []byte(validPresenceV2Payload)},
+		},
+	}
+
+	if !callProcessFetches(
+		context.Background(), client, fetches,
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	) {
+		t.Fatal("processFetches() = false, want true")
+	}
+
+	events := store.events()
+	if len(events) != 2 {
+		t.Fatalf("inserts = %d, want 2", len(events))
+	}
+	if events[0].SchemaVersion != 1 || events[0].RoomID == nil || *events[0].RoomID != "kitchen" {
+		t.Fatalf("v1 event = %+v", events[0])
+	}
+	if events[1].SchemaVersion != 2 || events[1].RoomID != nil ||
+		events[1].SensorID == nil || *events[1].SensorID != "presence-1" {
+		t.Fatalf("v2 event = %+v", events[1])
+	}
+	if len(committed) != 2 || committed[0] != 1 || committed[1] != 2 {
+		t.Fatalf("committed offsets = %v, want [1 2]", committed)
+	}
+}
+
+func TestProcessFetchesSkipsV2WithoutSensorIDAndCommits(t *testing.T) {
+	store := &mockStore{}
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{{
+			Topic: "event-data", Partition: 0, Offset: 1,
+			Value: []byte(`{"schemaVersion":2,"roomId":"kitchen","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"present":true}}`),
+		}},
+	}
+
+	if !callProcessFetches(
+		context.Background(), client, fetches,
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	) {
+		t.Fatal("processFetches() = false, want true")
+	}
+	if store.count() != 0 {
+		t.Fatalf("inserts = %d, want 0", store.count())
+	}
+	if committed != 1 {
+		t.Fatalf("committed = %d, want 1", committed)
+	}
+}
+
+func TestProcessFetchesDoesNotCommitOffsetWhileDatabaseFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	store := &mockStore{
+		insert: func(context.Context, event.Event) error {
+			attempts++
+			if attempts == 3 {
+				cancel()
+			}
+			return errors.New("db down")
+		},
+	}
+
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{{
+			Topic: "event-data", Partition: 0, Offset: 1, Value: []byte(validPresenceV2Payload),
+		}},
+	}
+
+	got := callProcessFetches(
+		ctx, client, fetches,
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	)
+
+	if got {
+		t.Fatal("processFetches() = true, want false once canceled")
+	}
+	if attempts < 3 {
+		t.Fatalf("insert attempts = %d, want at least 3", attempts)
+	}
+	if committed != 0 {
+		t.Fatalf("committed = %d, want 0 while persistence fails", committed)
+	}
+}
+
+func TestProcessFetchesCommitsOnlyAfterPersist(t *testing.T) {
+	var order []string
+	store := &mockStore{
+		insert: func(context.Context, event.Event) error {
+			order = append(order, "persist")
+			return nil
+		},
+	}
+	client := &mockKafkaClient{
+		commitRecords: func(context.Context, ...*kgo.Record) error {
+			order = append(order, "commit")
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{{
+			Topic: "event-data", Partition: 0, Offset: 1, Value: []byte(validPresenceV2Payload),
+		}},
+	}
+
+	if !callProcessFetches(
+		context.Background(), client, fetches,
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	) {
+		t.Fatal("processFetches() = false, want true")
+	}
+	if len(order) != 2 || order[0] != "persist" || order[1] != "commit" {
+		t.Fatalf("order = %v, want [persist commit]", order)
 	}
 }
 
@@ -458,7 +619,7 @@ func TestProcessFetchesRetriesInvalidRecordCommit(t *testing.T) {
 	fetches := &mockKafkaFetches{
 		records: []*kgo.Record{{
 			Topic: "event-data", Partition: 0, Offset: 1,
-			Value: []byte(`{"roomId":"kitchen","type":"AIR"}`),
+			Value: []byte(`{"schemaVersion":1,"roomId":"kitchen","type":"AIR"}`),
 		}},
 	}
 
@@ -495,7 +656,7 @@ func TestProcessFetchesSkipsInvalidAndCommits(t *testing.T) {
 	fetches := &mockKafkaFetches{
 		records: []*kgo.Record{{
 			Topic: "event-data", Partition: 0, Offset: 1,
-			Value: []byte(`{"roomId":"kitchen","type":"AIR"}`),
+			Value: []byte(`{"schemaVersion":1,"roomId":"kitchen","type":"AIR"}`),
 		}},
 	}
 
