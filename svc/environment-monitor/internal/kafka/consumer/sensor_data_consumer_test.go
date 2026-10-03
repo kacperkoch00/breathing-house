@@ -2,10 +2,12 @@ package consumer
 
 import (
 	"context"
-	"errors"
 	"environment-monitor/internal/handler"
 	"environment-monitor/internal/metrics"
+	"environment-monitor/internal/reading"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,13 +17,24 @@ import (
 	"go.uber.org/zap"
 )
 
+const validAIRPayload = `{
+	"schemaVersion": 1,
+	"roomId": "kitchen",
+	"deviceId": "sensor-1",
+	"type": "AIR",
+	"observedAt": "2026-10-03T08:00:00Z",
+	"receivedAt": "2026-10-03T08:00:01Z",
+	"values": {"temperature": 22.5, "humidity": 45, "co2": 700}
+}`
+
 func newTestKafkaMetrics() *metrics.Kafka {
 	return metrics.NewKafka(prometheus.NewRegistry())
 }
 
 type mockKafkaClient struct {
-	ping        func(context.Context) error
-	pollFetches func(context.Context) kafkaFetches
+	ping          func(context.Context) error
+	pollFetches   func(context.Context) kafkaFetches
+	commitRecords func(context.Context, ...*kgo.Record) error
 }
 
 func (m *mockKafkaClient) Ping(ctx context.Context) error {
@@ -30,6 +43,13 @@ func (m *mockKafkaClient) Ping(ctx context.Context) error {
 
 func (m *mockKafkaClient) PollFetches(ctx context.Context) kafkaFetches {
 	return m.pollFetches(ctx)
+}
+
+func (m *mockKafkaClient) CommitRecords(ctx context.Context, records ...*kgo.Record) error {
+	if m.commitRecords == nil {
+		return nil
+	}
+	return m.commitRecords(ctx, records...)
 }
 
 type mockKafkaFetches struct {
@@ -55,6 +75,28 @@ func (m *mockKafkaFetches) EachRecord(fn func(*kgo.Record)) {
 	}
 }
 
+type mockStore struct {
+	mu      sync.Mutex
+	inserts []reading.Reading
+	err     error
+}
+
+func (m *mockStore) InsertReading(_ context.Context, r reading.Reading) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.inserts = append(m.inserts, r)
+	return nil
+}
+
+func (m *mockStore) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.inserts)
+}
+
 func TestNewKafkaConsumer(t *testing.T) {
 	logger := zap.NewNop()
 
@@ -76,32 +118,166 @@ func TestNewKafkaConsumer(t *testing.T) {
 	client.Close()
 }
 
-func TestProcessFetchesWithRecord(t *testing.T) {
+func TestProcessFetchesPersistsAndCommits(t *testing.T) {
 	logger := zap.NewNop()
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
+	readiness.SetReady(true)
+
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
 
 	fetches := &mockKafkaFetches{
 		records: []*kgo.Record{
 			{
 				Topic:     "sensor-data",
 				Partition: 0,
-				Value:     []byte(`{"roomId":"kitchen","type":"AIR","values":{"co2":650}}`),
+				Offset:    7,
+				Value:     []byte(validAIRPayload),
 			},
 		},
 	}
 
-	got := processFetches(fetches, logger, newTestKafkaMetrics())
+	got := processFetches(
+		context.Background(),
+		client,
+		fetches,
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
 
 	if !got {
 		t.Fatal("processFetches() = false, want true")
+	}
+	if store.count() != 1 {
+		t.Fatalf("inserts = %d, want 1", store.count())
+	}
+	if committed != 1 {
+		t.Fatalf("committed = %d, want 1", committed)
+	}
+	if !readiness.IsReady() {
+		t.Fatal("readiness = false, want true")
+	}
+}
+
+func TestProcessFetchesSkipsInvalidAndCommits(t *testing.T) {
+	logger := zap.NewNop()
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
+	readiness.SetReady(true)
+
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{
+			{
+				Topic:     "sensor-data",
+				Partition: 0,
+				Offset:    1,
+				Value:     []byte(`{"roomId":"kitchen","type":"PRESENCE"}`),
+			},
+		},
+	}
+
+	got := processFetches(
+		context.Background(),
+		client,
+		fetches,
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
+
+	if !got {
+		t.Fatal("processFetches() = false, want true")
+	}
+	if store.count() != 0 {
+		t.Fatalf("inserts = %d, want 0", store.count())
+	}
+	if committed != 1 {
+		t.Fatalf("committed = %d, want 1", committed)
+	}
+}
+
+func TestProcessFetchesDoesNotCommitOnPersistError(t *testing.T) {
+	logger := zap.NewNop()
+	store := &mockStore{err: errors.New("db down")}
+	readiness := handler.NewReadiness()
+	readiness.SetReady(true)
+
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
+
+	fetches := &mockKafkaFetches{
+		records: []*kgo.Record{
+			{
+				Topic:     "sensor-data",
+				Partition: 0,
+				Offset:    1,
+				Value:     []byte(validAIRPayload),
+			},
+		},
+	}
+
+	got := processFetches(
+		context.Background(),
+		client,
+		fetches,
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
+
+	if got {
+		t.Fatal("processFetches() = true, want false")
+	}
+	if committed != 0 {
+		t.Fatalf("committed = %d, want 0", committed)
+	}
+	if readiness.IsReady() {
+		t.Fatal("readiness = true, want false after DB failure")
 	}
 }
 
 func TestProcessFetchesWithoutRecords(t *testing.T) {
 	logger := zap.NewNop()
+	client := &mockKafkaClient{}
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
 
-	fetches := &mockKafkaFetches{}
-
-	got := processFetches(fetches, logger, newTestKafkaMetrics())
+	got := processFetches(
+		context.Background(),
+		client,
+		&mockKafkaFetches{},
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
 
 	if !got {
 		t.Fatal("processFetches() = false, want true")
@@ -110,6 +286,9 @@ func TestProcessFetchesWithoutRecords(t *testing.T) {
 
 func TestProcessFetchesWithError(t *testing.T) {
 	logger := zap.NewNop()
+	client := &mockKafkaClient{}
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
 
 	fetches := &mockKafkaFetches{
 		errors: []kafkaFetchError{
@@ -121,7 +300,16 @@ func TestProcessFetchesWithError(t *testing.T) {
 		},
 	}
 
-	got := processFetches(fetches, logger, newTestKafkaMetrics())
+	got := processFetches(
+		context.Background(),
+		client,
+		fetches,
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
 
 	if got {
 		t.Fatal("processFetches() = true, want false")
@@ -130,6 +318,9 @@ func TestProcessFetchesWithError(t *testing.T) {
 
 func TestProcessFetchesWithMultipleErrors(t *testing.T) {
 	logger := zap.NewNop()
+	client := &mockKafkaClient{}
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
 
 	fetches := &mockKafkaFetches{
 		errors: []kafkaFetchError{
@@ -146,7 +337,16 @@ func TestProcessFetchesWithMultipleErrors(t *testing.T) {
 		},
 	}
 
-	got := processFetches(fetches, logger, newTestKafkaMetrics())
+	got := processFetches(
+		context.Background(),
+		client,
+		fetches,
+		logger,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		readiness,
+	)
 
 	if got {
 		t.Fatal("processFetches() = true, want false")
@@ -166,14 +366,23 @@ func TestPollEventsStopsWhenContextIsCanceled(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
+		pollEvents(
+			ctx,
+			client,
+			zap.NewNop(),
+			time.Millisecond,
+			time.Second,
+			newTestKafkaMetrics(),
+			&mockStore{},
+			handler.NewReadiness(),
+		)
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("pollEvents(, newTestKafkaMetrics()) did not stop")
+		t.Fatal("pollEvents() did not stop")
 	}
 }
 
@@ -182,6 +391,7 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 	defer cancel()
 
 	pollCount := 0
+	store := &mockStore{}
 
 	client := &mockKafkaClient{
 		pollFetches: func(context.Context) kafkaFetches {
@@ -193,7 +403,8 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 						{
 							Topic:     "sensor-data",
 							Partition: 0,
-							Value:     []byte(`{"roomId":"kitchen","type":"ROOM"}`),
+							Offset:    1,
+							Value:     []byte(validAIRPayload),
 						},
 					},
 				}
@@ -205,10 +416,22 @@ func TestPollEventsProcessesRecords(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
+	pollEvents(
+		ctx,
+		client,
+		zap.NewNop(),
+		time.Millisecond,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		handler.NewReadiness(),
+	)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
+	}
+	if store.count() != 1 {
+		t.Fatalf("inserts = %d, want 1", store.count())
 	}
 }
 
@@ -240,7 +463,16 @@ func TestPollEventsRetriesAfterFetchError(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
+	pollEvents(
+		ctx,
+		client,
+		zap.NewNop(),
+		time.Millisecond,
+		time.Second,
+		newTestKafkaMetrics(),
+		&mockStore{},
+		handler.NewReadiness(),
+	)
 
 	if pollCount != 2 {
 		t.Fatalf("PollFetches() called %d times, want 2", pollCount)
@@ -267,7 +499,16 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		pollEvents(ctx, client, zap.NewNop(), time.Second, newTestKafkaMetrics())
+		pollEvents(
+			ctx,
+			client,
+			zap.NewNop(),
+			time.Second,
+			time.Second,
+			newTestKafkaMetrics(),
+			&mockStore{},
+			handler.NewReadiness(),
+		)
 		close(done)
 	}()
 
@@ -277,7 +518,7 @@ func TestPollEventsStopsDuringRetryDelay(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("pollEvents(, newTestKafkaMetrics()) did not stop during retry delay")
+		t.Fatal("pollEvents() did not stop during retry delay")
 	}
 }
 
@@ -286,6 +527,7 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 	defer cancel()
 
 	pollCount := 0
+	store := &mockStore{}
 
 	client := &mockKafkaClient{
 		pollFetches: func(context.Context) kafkaFetches {
@@ -309,7 +551,8 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 						{
 							Topic:     "sensor-data",
 							Partition: 0,
-							Value:     []byte(`{"roomId":"kitchen","type":"AIR"}`),
+							Offset:    1,
+							Value:     []byte(validAIRPayload),
 						},
 					},
 				}
@@ -321,16 +564,29 @@ func TestPollEventsHandlesRecordAfterRetry(t *testing.T) {
 		},
 	}
 
-	pollEvents(ctx, client, zap.NewNop(), time.Millisecond, newTestKafkaMetrics())
+	pollEvents(
+		ctx,
+		client,
+		zap.NewNop(),
+		time.Millisecond,
+		time.Second,
+		newTestKafkaMetrics(),
+		store,
+		handler.NewReadiness(),
+	)
 
 	if pollCount != 3 {
 		t.Fatalf("PollFetches() called %d times, want 3", pollCount)
+	}
+	if store.count() != 1 {
+		t.Fatalf("inserts = %d, want 1", store.count())
 	}
 }
 
 func TestCheckKafkaReadiness(t *testing.T) {
 	ctx := context.Background()
 	readiness := handler.NewReadiness()
+	readiness.SetDatabaseReady(true)
 
 	client := &mockKafkaClient{
 		ping: func(context.Context) error {
@@ -350,6 +606,7 @@ func TestCheckKafkaReadinessRetriesAfterError(t *testing.T) {
 	defer cancel()
 
 	readiness := handler.NewReadiness()
+	readiness.SetDatabaseReady(true)
 	pingCount := 0
 
 	client := &mockKafkaClient{
@@ -379,6 +636,7 @@ func TestCheckKafkaReadinessStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	readiness := handler.NewReadiness()
+	readiness.SetDatabaseReady(true)
 
 	client := &mockKafkaClient{
 		ping: func(context.Context) error {
@@ -407,20 +665,22 @@ func TestCheckKafkaReadinessStopsWhenContextIsCanceled(t *testing.T) {
 	}
 }
 
-
 func TestProcessFetchesIncrementsMessagesReceived(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	kafkaMetrics := metrics.NewKafka(reg)
 	logger := zap.NewNop()
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
+	client := &mockKafkaClient{}
 
 	fetches := &mockKafkaFetches{
 		records: []*kgo.Record{
-			{Topic: "sensor-data", Partition: 0, Value: []byte(`{"roomId":"kitchen"}`)},
-			{Topic: "sensor-data", Partition: 0, Value: []byte(`{"roomId":"living"}`)},
+			{Topic: "sensor-data", Partition: 0, Offset: 1, Value: []byte(validAIRPayload)},
+			{Topic: "sensor-data", Partition: 0, Offset: 2, Value: []byte(validAIRPayload)},
 		},
 	}
 
-	if !processFetches(fetches, logger, kafkaMetrics) {
+	if !processFetches(context.Background(), client, fetches, logger, time.Second, kafkaMetrics, store, readiness) {
 		t.Fatal("processFetches() = false, want true")
 	}
 
@@ -438,6 +698,9 @@ func TestProcessFetchesIncrementsFetchErrors(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	kafkaMetrics := metrics.NewKafka(reg)
 	logger := zap.NewNop()
+	client := &mockKafkaClient{}
+	store := &mockStore{}
+	readiness := handler.NewReadiness()
 
 	fetches := &mockKafkaFetches{
 		errors: []kafkaFetchError{
@@ -446,7 +709,7 @@ func TestProcessFetchesIncrementsFetchErrors(t *testing.T) {
 		},
 	}
 
-	if processFetches(fetches, logger, kafkaMetrics) {
+	if processFetches(context.Background(), client, fetches, logger, time.Second, kafkaMetrics, store, readiness) {
 		t.Fatal("processFetches() = true, want false")
 	}
 

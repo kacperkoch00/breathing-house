@@ -2,6 +2,7 @@
 # Defaults: user/password bh/bh, database breathing_house.
 # In-cluster DNS: postgres:5432
 # Init SQL runs only on first boot with an empty PVC.
+# Keep the ConfigMap SQL in sync with deploy/k8s/postgres-init.sql (used by CI).
 ---
 apiVersion: v1
 kind: Secret
