@@ -194,19 +194,19 @@ jobs:
 
       - name: Build service images
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             docker build -t "$service:nightly" "svc/$service"
           done
 
       - name: Load service images into Kind
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             kind load docker-image "$service:nightly" --name "$KIND_CLUSTER"
           done
 
       - name: Install all service charts with Broker Routing Overrides
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             helm upgrade --install "$service" "deploy/helm/$service" \
               --set image.repository="$service" \
               --set image.tag=nightly \
@@ -223,7 +223,7 @@ jobs:
 
       - name: Wait for all service rollouts
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             deployment=$(kubectl get deployment -l "app.kubernetes.io/name=$service" -o jsonpath='{.items[0].metadata.name}')
             kubectl rollout status "deployment/$deployment" --timeout=180s
           done
@@ -248,7 +248,7 @@ jobs:
           kubectl logs deployment/mosquitto > robot-results/kubernetes/mosquitto.log 2>&1 || true
           kubectl logs deployment/kafka > robot-results/kubernetes/kafka.log 2>&1 || true
 
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard; do
             kubectl logs -l "app.kubernetes.io/name=$service" --all-containers=true --tail=200 \
               > "robot-results/kubernetes/$service.log" 2>&1 || true
           done

@@ -31,12 +31,12 @@ extraScrapeConfigs: |
     static_configs:
       - targets:
           - occupancy-monitor.default.svc:8081
-  - job_name: alert-notifier
+  - job_name: home-api
     scrape_interval: 15s
     metrics_path: /actuator/prometheus
     static_configs:
       - targets:
-          - alert-notifier.default.svc:8082
+          - home-api.default.svc:8082
   - job_name: sensors-data-collector
     scrape_interval: 15s
     metrics_path: /actuator/prometheus

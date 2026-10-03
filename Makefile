@@ -6,8 +6,8 @@ CHART_DIR ?= deploy/helm/$(SERVICE)
 IMAGE ?= localhost/$(SERVICE):dev
 IMAGE_REPOSITORY ?= localhost/$(SERVICE)
 OPENAPI_SERVICES ?= environment-monitor occupancy-monitor
-JAVA_SERVICES := alert-notifier sensors-data-collector
-SERVICES := environment-monitor occupancy-monitor alert-notifier sensors-data-collector home-dashboard
+JAVA_SERVICES := home-api sensors-data-collector
+SERVICES := environment-monitor occupancy-monitor home-api sensors-data-collector home-dashboard
 DIFF_BASE ?= HEAD~1
 K8S_RELEASE ?= $(SERVICE)
 
@@ -81,7 +81,7 @@ build:
 				helm lint $(CHART_DIR); \
 				$(MAKE) helm-package SERVICE=$(SERVICE); \
 				podman build -t $(IMAGE) $(SERVICE_DIR);; \
-			alert-notifier|sensors-data-collector) \
+			home-api|sensors-data-collector) \
 				(cd $(SERVICE_DIR) && mvn -B test package); \
 				helm lint $(CHART_DIR); \
 				$(MAKE) helm-package SERVICE=$(SERVICE); \

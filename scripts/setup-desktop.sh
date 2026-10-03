@@ -35,7 +35,7 @@ MQTT_IMAGE="${MQTT_IMAGE:-eclipse-mosquitto:2.0.18}"
 SERVICES=(
   environment-monitor
   occupancy-monitor
-  alert-notifier
+  home-api
   sensors-data-collector
   home-dashboard
 )
@@ -43,7 +43,7 @@ SERVICES=(
 HOSTNAMES=(
   environment-monitor.local
   occupancy-monitor.local
-  alert-notifier.local
+  home-api.local
   sensors-data-collector.local
   home-dashboard.local
 )
@@ -346,8 +346,8 @@ check_health() {
     "environment-monitor" "8080" "/live" "${ip}" || true
   check_one "occupancy-monitor.local" "/live" \
     "occupancy-monitor" "8081" "/live" "${ip}" || true
-  check_one "alert-notifier.local" "/live" \
-    "alert-notifier" "8082" "/live" "${ip}" || true
+  check_one "home-api.local" "/live" \
+    "home-api" "8082" "/live" "${ip}" || true
   check_one "sensors-data-collector.local" "/live" \
     "sensors-data-collector" "8083" "/live" "${ip}" || true
   check_one "home-dashboard.local" "/" \
@@ -401,7 +401,7 @@ Minikube IP: ${ip}
 URLs (after /etc/hosts):
   http://environment-monitor.local/live
   http://occupancy-monitor.local/live
-  http://alert-notifier.local/live
+  http://home-api.local/live
   http://sensors-data-collector.local/live
   http://home-dashboard.local/
 
@@ -441,7 +441,7 @@ Grafana (namespace=observability):
     - Breathing House / Environment Monitor
     - Breathing House / Occupancy Monitor
     - Breathing House / Sensors Data Collector
-    - Breathing House / Alert Notifier
+    - Breathing House / Home API
   Port-forward:
     kubectl -n observability port-forward svc/grafana 3000:80
   Then open http://localhost:3000

@@ -168,7 +168,7 @@ jobs:
 
       - name: Build backend service images
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
             echo "==> Building $service"
 
             docker build \
@@ -178,7 +178,7 @@ jobs:
 
       - name: Load backend images into Kind
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
             echo "==> Loading $service"
 
             kind load docker-image \
@@ -188,7 +188,7 @@ jobs:
 
       - name: Deploy backend services
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
             echo "==> Deploying $service"
 
             helm upgrade --install "$service" \
@@ -207,7 +207,7 @@ jobs:
 
       - name: Wait for backend service rollouts
         run: |
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
             echo "==> Waiting for $service"
             kubectl rollout status "deployment/$service" --timeout=180s
           done
@@ -241,8 +241,8 @@ jobs:
             "http://environment-monitor:8080/metrics"
           check occupancy-monitor \
             "http://occupancy-monitor:8081/metrics"
-          check alert-notifier \
-            "http://alert-notifier:8082/actuator/prometheus"
+          check home-api \
+            "http://home-api:8082/actuator/prometheus"
           check sensors-data-collector \
             "http://sensors-data-collector:8083/actuator/prometheus"
 
@@ -266,7 +266,7 @@ jobs:
             -n observability \
             --timeout=60s
 
-          jobs="environment-monitor occupancy-monitor alert-notifier sensors-data-collector"
+          jobs="environment-monitor occupancy-monitor home-api sensors-data-collector"
           failed=0
 
           for attempt in $(seq 1 40); do
@@ -354,7 +354,7 @@ jobs:
           echo "$search"
 
           for uid in breathing-house-overview environment-monitor occupancy-monitor \
-            sensors-data-collector alert-notifier; do
+            sensors-data-collector home-api; do
             echo "$search" | grep -q "\"uid\":\"$uid\"" || \
               echo "$search" | grep -q "\"uid\": \"$uid\"" || {
                 echo "FAIL: dashboard uid '$uid' not found in search results"
@@ -427,7 +427,7 @@ jobs:
             --tail=200 \
             > grafana-results/kafka.log 2>&1 || true
 
-          for service in environment-monitor occupancy-monitor alert-notifier sensors-data-collector; do
+          for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
             kubectl logs \
               -l "app.kubernetes.io/name=$service" \
               --all-containers=true \

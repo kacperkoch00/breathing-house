@@ -1,0 +1,91 @@
+name: home-api CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/home-api/**'
+      - 'deploy/helm/home-api/**'
+      - 'Makefile'
+      - '.github/workflows/home-api.yml'
+      - '.github/workflows/kubernetes-integration.yml'
+  pull_request:
+    paths:
+      - 'svc/home-api/**'
+      - 'deploy/helm/home-api/**'
+      - 'Makefile'
+      - '.github/workflows/home-api.yml'
+      - '.github/workflows/kubernetes-integration.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: azure/setup-helm@v5
+      - name: Test and package
+        working-directory: svc/home-api
+        run: mvn -B test package
+      - name: Integration smoke test
+        working-directory: svc/home-api
+        run: |
+          java -jar target/home-api-0.1.0-SNAPSHOT.jar --server.port=18082 >/tmp/home-api.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:18082/live && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18082/ready
+      - name: Helm lint
+        run: helm lint deploy/helm/home-api
+      - name: Package Helm chart
+        run: mkdir -p /tmp/helm && helm package deploy/helm/home-api --destination /tmp/helm --version 0.1.0-ci.${{ github.run_number }} --app-version ${{ github.sha }}
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in Helm to GitHub Container Registry
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish Helm chart
+        if: github.event_name == 'push'
+        run: helm push /tmp/helm/home-api-0.1.0-ci.${{ github.run_number }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+      - name: Set image metadata
+        id: image
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/home-api
+          tags: |
+            type=sha,prefix=sha-,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish image
+        uses: docker/build-push-action@v7
+        with:
+          context: svc/home-api
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}
+
+  kubernetes-integration:
+    needs: build-test-integration
+    if: needs.build-test-integration.result == 'success'
+    uses: ./.github/workflows/kubernetes-integration.yml
+    with:
+      service: home-api
+      path: /live
+      readiness-path: /ready
+      publish-oci: ${{ github.event_name == 'push' }}
+    secrets: inherit

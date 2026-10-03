@@ -47,9 +47,9 @@
       "keepTime": true,
       "tags": [],
       "targetBlank": false,
-      "title": "Alert Notifier",
+      "title": "Home API",
       "type": "link",
-      "url": "/d/alert-notifier"
+      "url": "/d/home-api"
     }
   ],
   "panels": [
@@ -121,7 +121,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "up{job=~\"environment-monitor|occupancy-monitor|alert-notifier|sensors-data-collector\"}",
+          "expr": "up{job=~\"environment-monitor|occupancy-monitor|home-api|sensors-data-collector\"}",
           "legendFormat": "{{job}}",
           "refId": "A"
         }
@@ -389,7 +389,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "process_cpu_usage{job=~\"alert-notifier|sensors-data-collector\"}",
+          "expr": "process_cpu_usage{job=~\"home-api|sensors-data-collector\"}",
           "legendFormat": "{{job}}",
           "refId": "A"
         }
