@@ -33,7 +33,7 @@ deployment instructions.
 - **environment-monitor** (Go): consumes Kafka `sensor-data` and persists environment readings. `/ready` requires Kafka and database connectivity.
 - **occupancy-monitor** (Go): consumes Kafka `event-data` and persists occupancy events. `/ready` requires Kafka and database connectivity.
 - **sensors-data-collector** (Spring Boot): consumes MQTT sensor topics, validates and transforms payloads, publishes to Kafka.
-- **home-api** (Spring Boot): single backend API consumed by `home-dashboard`; future read/query boundary for historical environment and occupancy data, and owner of alert persistence, lifecycle, and alert-facing endpoints. This rename establishes service identity and responsibility; currently only health and metrics endpoints are implemented (history and alert APIs do not exist yet).
+- **home-api** (Spring Boot): single backend API consumed by `home-dashboard`; read/query boundary for historical environment and occupancy data (`/api/v1/rooms`, environment readings, occupancy events). Alert persistence and alert APIs are planned but not implemented yet. `/ready` requires both history tables to be queryable.
 - **home-dashboard** (React/Vite): static UI with mock data; not wired to live backends yet.
 
 Backend services keep their HTTP contract in an `openapi.yaml` file. Go services
