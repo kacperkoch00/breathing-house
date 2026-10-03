@@ -187,6 +187,19 @@ install_kafka() {
   done
 }
 
+install_postgres() {
+  # Same as Makefile k8s-postgres (without re-running k8s-start / hardcoded driver).
+  log "installing Postgres (schemas environment/occupancy)"
+  kubectl apply -f deploy/k8s/postgres.yaml
+  kubectl rollout status deployment/postgres --namespace "${NAMESPACE}" --timeout=180s
+  kubectl exec deployment/postgres --namespace "${NAMESPACE}" -- \
+    psql -U bh -d breathing_house -c \
+    "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname IN ('environment','occupancy') ORDER BY 1;"
+  kubectl exec deployment/postgres --namespace "${NAMESPACE}" -- \
+    psql -U bh -d breathing_house -c \
+    "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('environment','occupancy') ORDER BY 1, 2;"
+}
+
 configure_ghcr_pull() {
   if [[ -z "${GHCR_TOKEN:-}" ]]; then
     log "GHCR_TOKEN unset; assuming public GHCR images (no pull secret)"
@@ -450,6 +463,7 @@ main() {
   fi
 
   install_kafka
+  install_postgres
 
   if [[ "${WITH_OBSERVABILITY}" == "1" ]]; then
     install_observability
