@@ -20,7 +20,7 @@ public class HistoryRepository {
             new EnvironmentReading(
                     rs.getLong("id"),
                     rs.getString("room_id"),
-                    rs.getString("device_id"),
+                    rs.getString("sensor_id"),
                     SensorType.valueOf(rs.getString("sensor_type")),
                     getNullableDouble(rs, "temperature"),
                     getNullableDouble(rs, "humidity"),
@@ -36,7 +36,7 @@ public class HistoryRepository {
             new OccupancyEvent(
                     rs.getLong("id"),
                     rs.getString("room_id"),
-                    rs.getString("device_id"),
+                    rs.getString("sensor_id"),
                     EventType.valueOf(rs.getString("event_type")),
                     getNullableBoolean(rs, "present"),
                     getNullableBoolean(rs, "open"),
@@ -71,7 +71,7 @@ public class HistoryRepository {
             int limit,
             int offset) {
         StringBuilder sql = new StringBuilder("""
-                SELECT id, room_id, device_id, sensor_type, temperature, humidity, co2, light,
+                SELECT id, room_id, COALESCE(sensor_id, device_id) AS sensor_id, sensor_type, temperature, humidity, co2, light,
                        light_level, observed_at, received_at, ingested_at
                 FROM environment.environment_reading
                 WHERE room_id = :roomId
@@ -94,7 +94,7 @@ public class HistoryRepository {
             int limit,
             int offset) {
         StringBuilder sql = new StringBuilder("""
-                SELECT id, room_id, device_id, event_type, present, open,
+                SELECT id, room_id, COALESCE(sensor_id, device_id) AS sensor_id, event_type, present, open,
                        observed_at, received_at, ingested_at
                 FROM occupancy.occupancy_event
                 WHERE room_id = :roomId

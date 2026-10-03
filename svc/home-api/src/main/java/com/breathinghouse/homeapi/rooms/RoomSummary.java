@@ -1,4 +1,6 @@
 package com.breathinghouse.homeapi.rooms;
 
-public record RoomSummary(String roomId, String displayName) {
+import java.util.List;
+
+public record RoomSummary(String roomId, String name, String description, List<String> sensorIds) {
 }

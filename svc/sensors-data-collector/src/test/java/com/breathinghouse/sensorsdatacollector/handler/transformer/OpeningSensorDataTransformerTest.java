@@ -31,14 +31,16 @@ class OpeningSensorDataTransformerTest {
     void shouldTransformOpenState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertNull(result.deviceId());
         assertEquals(SensorType.OPENING, result.type());
         assertNotNull(result.observedAt());
@@ -50,13 +52,15 @@ class OpeningSensorDataTransformerTest {
     void shouldTransformClosedState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "CLOSED"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertEquals(SensorType.OPENING, result.type());
         assertNotNull(result.observedAt());
         assertNotNull(result.receivedAt());
@@ -67,11 +71,12 @@ class OpeningSensorDataTransformerTest {
     void shouldAcceptLowercaseOpenState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "open"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Map.of("open", true), result.values());
     }
@@ -80,11 +85,12 @@ class OpeningSensorDataTransformerTest {
     void shouldAcceptLowercaseClosedState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "closed"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Map.of("open", false), result.values());
     }
@@ -93,13 +99,14 @@ class OpeningSensorDataTransformerTest {
     void shouldThrowExceptionForUnknownOpeningState() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "UNKNOWN"
                 }
                 """;
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Unknown opening state: UNKNOWN", exception.getMessage());
@@ -107,11 +114,11 @@ class OpeningSensorDataTransformerTest {
 
     @Test
     void shouldThrowExceptionWhenStateMissing() {
-        String payload = "{}";
+        String payload = "{\"sensorId\":\"sensor-1\"}";
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Missing required field: state", exception.getMessage());
@@ -121,13 +128,14 @@ class OpeningSensorDataTransformerTest {
     void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN",
                 }
                 """;
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Invalid opening sensor payload", exception.getMessage());
@@ -138,12 +146,13 @@ class OpeningSensorDataTransformerTest {
     void shouldUseObservedAtFromIsoTimestamp() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN",
                     "timestamp": "2024-01-15T10:30:00Z"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
     }
@@ -152,12 +161,13 @@ class OpeningSensorDataTransformerTest {
     void shouldUseObservedAtFromEpochMillis() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN",
                     "timestamp": 1704312600000
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
     }
@@ -166,13 +176,14 @@ class OpeningSensorDataTransformerTest {
     void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN"
                 }
                 """;
 
         Instant before = Instant.now();
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         Instant after = Instant.now();
 
@@ -183,16 +194,18 @@ class OpeningSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetDeviceIdWhenPresent() {
+    void shouldNotExposeDeviceIdInEnvelope() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "state": "OPEN",
                     "deviceId": "door-1"
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("door-1", result.deviceId());
+        assertNull(result.deviceId());
+        assertFalse(result.values().containsKey("deviceId"));
     }
 }

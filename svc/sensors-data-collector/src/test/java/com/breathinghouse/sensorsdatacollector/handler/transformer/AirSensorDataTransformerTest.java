@@ -31,16 +31,18 @@ class AirSensorDataTransformerTest {
     void shouldTransformValidPayload() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "co2": 650
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
-        assertEquals("kitchen", result.roomId());
+        assertEquals("sensor-1", result.sensorId());
+        assertNull(result.roomId());
         assertNull(result.deviceId());
         assertEquals(SensorType.AIR, result.type());
         assertNotNull(result.observedAt());
@@ -52,6 +54,7 @@ class AirSensorDataTransformerTest {
     void shouldUseObservedAtFromIsoTimestamp() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "co2": 650,
@@ -59,7 +62,7 @@ class AirSensorDataTransformerTest {
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.parse("2024-01-15T10:30:00Z"), result.observedAt());
     }
@@ -68,6 +71,7 @@ class AirSensorDataTransformerTest {
     void shouldUseObservedAtFromEpochMillis() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "co2": 650,
@@ -75,7 +79,7 @@ class AirSensorDataTransformerTest {
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(Instant.ofEpochMilli(1_704_312_600_000L), result.observedAt());
     }
@@ -84,6 +88,7 @@ class AirSensorDataTransformerTest {
     void shouldSetObservedAtAndReceivedAtToNowWhenTimestampMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "co2": 650
@@ -92,7 +97,7 @@ class AirSensorDataTransformerTest {
 
         Instant before = Instant.now();
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
         Instant after = Instant.now();
 
@@ -103,9 +108,10 @@ class AirSensorDataTransformerTest {
     }
 
     @Test
-    void shouldSetDeviceIdWhenPresent() {
+    void shouldNotExposeDeviceIdInEnvelope() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2,
                     "co2": 650,
@@ -113,22 +119,24 @@ class AirSensorDataTransformerTest {
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "kitchen");
+        SensorData result = transformer.transform(payload, null);
 
-        assertEquals("air-sensor-1", result.deviceId());
+        assertNull(result.deviceId());
+        assertFalse(result.values().containsKey("deviceId"));
     }
 
     @Test
     void shouldThrowExceptionForInvalidJson() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                 }
                 """;
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Invalid air sensor payload", exception.getMessage());
@@ -139,6 +147,7 @@ class AirSensorDataTransformerTest {
     void shouldThrowExceptionWhenRequiredFieldMissing() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45.2
                 }
@@ -146,7 +155,7 @@ class AirSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Missing required field: co2", exception.getMessage());
@@ -156,6 +165,7 @@ class AirSensorDataTransformerTest {
     void shouldThrowExceptionWhenTemperatureHasWrongType() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": "warm",
                     "humidity": 45.2,
                     "co2": 650
@@ -164,7 +174,7 @@ class AirSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertEquals("Field 'temperature' must be a number", exception.getMessage());
@@ -174,6 +184,7 @@ class AirSensorDataTransformerTest {
     void shouldThrowExceptionWhenHumidityOutOfRange() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 120,
                     "co2": 650
@@ -182,7 +193,7 @@ class AirSensorDataTransformerTest {
 
         InvalidSensorPayloadException exception = assertThrows(
                 InvalidSensorPayloadException.class,
-                () -> transformer.transform(payload, "kitchen")
+                () -> transformer.transform(payload, null)
         );
 
         assertTrue(exception.getMessage().contains("humidity"));
@@ -192,6 +203,7 @@ class AirSensorDataTransformerTest {
     void shouldPreserveDifferentValueTypes() {
         String payload = """
                 {
+                    "sensorId": "sensor-1",
                     "temperature": 22.5,
                     "humidity": 45,
                     "co2": 650,
@@ -200,7 +212,7 @@ class AirSensorDataTransformerTest {
                 }
                 """;
 
-        SensorData result = transformer.transform(payload, "bedroom");
+        SensorData result = transformer.transform(payload, null);
 
         assertEquals(22.5, result.values().get("temperature"));
         assertEquals(45, result.values().get("humidity"));

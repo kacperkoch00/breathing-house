@@ -39,7 +39,9 @@ class StatusSensorDataTransformerTest {
 
         SensorData result = transformer.transform(payload, null);
 
-        assertEquals(SensorData.SCHEMA_VERSION, result.schemaVersion());
+        assertEquals(1, result.schemaVersion());
+        assertEquals(SensorData.STATUS_SCHEMA_VERSION, result.schemaVersion());
+        assertNull(result.sensorId());
         assertNull(result.roomId());
         assertNull(result.deviceId());
         assertEquals(SensorType.STATUS, result.type());

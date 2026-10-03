@@ -17,6 +17,17 @@ import java.util.Optional;
 @Repository
 public class AlertRepository {
 
+    /**
+     * A sensor's newest reading may drive current alerts only while its room snapshot equals the
+     * sensor's current assignment. Legacy rows without any sensor identity keep using their room.
+     */
+    private static final String CURRENT_ASSIGNMENT_FILTER = """
+            ((latest.sensor_id IS NULL AND latest.room_id IS NOT NULL)
+              OR EXISTS (
+                SELECT 1 FROM home_api.sensor assigned
+                WHERE assigned.sensor_id = latest.sensor_id
+                  AND assigned.room_id = latest.room_id))""";
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public AlertRepository(NamedParameterJdbcTemplate jdbc) {
@@ -35,24 +46,29 @@ public class AlertRepository {
 
     public List<EnvironmentSnapshot> latestEnvironment(SensorType sensorType) {
         String sql = """
-                SELECT room_id, device_id, sensor_type, temperature, humidity, co2, light, observed_at
+                SELECT room_id, sensor_id, sensor_type, temperature, humidity, co2, light, observed_at
                 FROM (
-                  SELECT room_id, device_id, sensor_type, temperature, humidity, co2, light, observed_at,
+                  SELECT room_id, COALESCE(sensor_id, device_id) AS sensor_id, sensor_type,
+                         temperature, humidity, co2, light, observed_at,
                          ROW_NUMBER() OVER (
-                           PARTITION BY room_id, sensor_type, COALESCE(device_id, '')
+                           PARTITION BY COALESCE(sensor_id, device_id, ''),
+                                        CASE WHEN COALESCE(sensor_id, device_id) IS NULL
+                                             THEN COALESCE(room_id, '') ELSE '' END,
+                                        sensor_type
                            ORDER BY observed_at DESC, id DESC
                          ) AS row_number
                   FROM environment.environment_reading
                   WHERE sensor_type = :sensorType
                 ) latest
                 WHERE row_number = 1
-                """;
+                  AND %s
+                """.formatted(CURRENT_ASSIGNMENT_FILTER);
         return jdbc.query(
                 sql,
                 new MapSqlParameterSource("sensorType", sensorType.name()),
                 (rs, rowNum) -> new EnvironmentSnapshot(
                         rs.getString("room_id"),
-                        rs.getString("device_id"),
+                        rs.getString("sensor_id"),
                         SensorType.valueOf(rs.getString("sensor_type")),
                         nullableDouble(rs.getObject("temperature")),
                         nullableDouble(rs.getObject("humidity")),
@@ -63,38 +79,43 @@ public class AlertRepository {
 
     public List<OccupancySnapshot> latestOccupancy(EventType eventType) {
         String sql = """
-                SELECT room_id, device_id, event_type, present, open, observed_at
+                SELECT room_id, sensor_id, event_type, present, open, observed_at
                 FROM (
-                  SELECT room_id, device_id, event_type, present, open, observed_at,
+                  SELECT room_id, COALESCE(sensor_id, device_id) AS sensor_id, event_type,
+                         present, open, observed_at,
                          ROW_NUMBER() OVER (
-                           PARTITION BY room_id, event_type, COALESCE(device_id, '')
+                           PARTITION BY COALESCE(sensor_id, device_id, ''),
+                                        CASE WHEN COALESCE(sensor_id, device_id) IS NULL
+                                             THEN COALESCE(room_id, '') ELSE '' END,
+                                        event_type
                            ORDER BY observed_at DESC, id DESC
                          ) AS row_number
                   FROM occupancy.occupancy_event
                   WHERE event_type = :eventType
                 ) latest
                 WHERE row_number = 1
-                """;
+                  AND %s
+                """.formatted(CURRENT_ASSIGNMENT_FILTER);
         return jdbc.query(
                 sql,
                 new MapSqlParameterSource("eventType", eventType.name()),
                 (rs, rowNum) -> new OccupancySnapshot(
                         rs.getString("room_id"),
-                        rs.getString("device_id"),
+                        rs.getString("sensor_id"),
                         EventType.valueOf(rs.getString("event_type")),
                         nullableBoolean(rs.getObject("present")),
                         nullableBoolean(rs.getObject("open")),
                         rs.getTimestamp("observed_at").toInstant()));
     }
 
-    public Optional<AlertState> findState(String ruleId, String roomId, String deviceId) {
+    public Optional<AlertState> findState(String ruleId, String roomId, String sensorId) {
         String sql = """
                 SELECT rule_id, room_id, device_id, condition_active, condition_started_at,
                        last_value, rule_fingerprint, last_evaluated_at
                 FROM home_api.alert_state
                 WHERE rule_id = :ruleId AND room_id = :roomId AND device_key = :deviceKey
                 """;
-        MapSqlParameterSource params = instanceParams(ruleId, roomId, deviceId);
+        MapSqlParameterSource params = instanceParams(ruleId, roomId, sensorId);
         return jdbc.query(sql, params, (rs, rowNum) -> new AlertState(
                         rs.getString("rule_id"),
                         rs.getString("room_id"),
@@ -111,7 +132,7 @@ public class AlertRepository {
     public void saveState(AlertState state) {
         String update = """
                 UPDATE home_api.alert_state
-                SET device_id = :deviceId,
+                SET device_id = :sensorId,
                     condition_active = :conditionActive,
                     condition_started_at = :conditionStartedAt,
                     last_value = :lastValue,
@@ -129,7 +150,7 @@ public class AlertRepository {
                   rule_id, room_id, device_key, device_id, condition_active,
                   condition_started_at, last_value, rule_fingerprint, last_evaluated_at
                 ) VALUES (
-                  :ruleId, :roomId, :deviceKey, :deviceId, :conditionActive,
+                  :ruleId, :roomId, :deviceKey, :sensorId, :conditionActive,
                   :conditionStartedAt, :lastValue, :ruleFingerprint, :lastEvaluatedAt
                 )
                 """;
@@ -140,7 +161,7 @@ public class AlertRepository {
         }
     }
 
-    public boolean hasActiveAlert(String ruleId, String roomId, String deviceId) {
+    public boolean hasActiveAlert(String ruleId, String roomId, String sensorId) {
         String sql = """
                 SELECT COUNT(*)
                 FROM home_api.alert
@@ -149,14 +170,14 @@ public class AlertRepository {
                   AND COALESCE(device_id, '') = :deviceKey
                   AND status = 'ACTIVE'
                 """;
-        Long count = jdbc.queryForObject(sql, instanceParams(ruleId, roomId, deviceId), Long.class);
+        Long count = jdbc.queryForObject(sql, instanceParams(ruleId, roomId, sensorId), Long.class);
         return count != null && count > 0;
     }
 
     public void createAlert(
             AlertConfiguration.ValidatedRule rule,
             String roomId,
-            String deviceId,
+            String sensorId,
             String message,
             String triggerValue,
             Instant now,
@@ -166,7 +187,7 @@ public class AlertRepository {
                   rule_id, room_id, device_id, severity, status, message, trigger_value,
                   triggered_at, last_evaluated_at, rule_snapshot
                 ) VALUES (
-                  :ruleId, :roomId, :deviceId, :severity, 'ACTIVE', :message, :triggerValue,
+                  :ruleId, :roomId, :sensorId, :severity, 'ACTIVE', :message, :triggerValue,
                   :now, :now, CAST(:ruleSnapshot AS jsonb)
                 )
                 """;
@@ -174,7 +195,7 @@ public class AlertRepository {
             jdbc.update(sql, new MapSqlParameterSource()
                     .addValue("ruleId", rule.id())
                     .addValue("roomId", roomId)
-                    .addValue("deviceId", deviceId)
+                    .addValue("sensorId", sensorId)
                     .addValue("severity", rule.severity().name())
                     .addValue("message", message)
                     .addValue("triggerValue", triggerValue)
@@ -185,7 +206,7 @@ public class AlertRepository {
         }
     }
 
-    public void touchActiveAlert(String ruleId, String roomId, String deviceId, Instant now) {
+    public void touchActiveAlert(String ruleId, String roomId, String sensorId, Instant now) {
         String sql = """
                 UPDATE home_api.alert
                 SET last_evaluated_at = :now
@@ -194,12 +215,12 @@ public class AlertRepository {
                   AND COALESCE(device_id, '') = :deviceKey
                   AND status = 'ACTIVE'
                 """;
-        MapSqlParameterSource params = instanceParams(ruleId, roomId, deviceId)
+        MapSqlParameterSource params = instanceParams(ruleId, roomId, sensorId)
                 .addValue("now", Timestamp.from(now));
         jdbc.update(sql, params);
     }
 
-    public void resolveActiveAlert(String ruleId, String roomId, String deviceId, Instant now) {
+    public void resolveActiveAlert(String ruleId, String roomId, String sensorId, Instant now) {
         String sql = """
                 UPDATE home_api.alert
                 SET status = 'RESOLVED', resolved_at = :now, last_evaluated_at = :now
@@ -208,7 +229,7 @@ public class AlertRepository {
                   AND COALESCE(device_id, '') = :deviceKey
                   AND status = 'ACTIVE'
                 """;
-        MapSqlParameterSource params = instanceParams(ruleId, roomId, deviceId)
+        MapSqlParameterSource params = instanceParams(ruleId, roomId, sensorId)
                 .addValue("now", Timestamp.from(now));
         jdbc.update(sql, params);
     }
@@ -233,6 +254,25 @@ public class AlertRepository {
                     last_evaluated_at = :now
                 WHERE condition_active = true
                 """ + filter, params);
+    }
+
+    public void resolveSensorAlertsInRoom(String roomId, String sensorId, Instant now) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("roomId", roomId)
+                .addValue("sensorId", sensorId)
+                .addValue("now", Timestamp.from(now));
+        jdbc.update("""
+                UPDATE home_api.alert
+                SET status = 'RESOLVED', resolved_at = :now, last_evaluated_at = :now
+                WHERE status = 'ACTIVE' AND room_id = :roomId AND device_id = :sensorId
+                """, params);
+        jdbc.update("""
+                UPDATE home_api.alert_state
+                SET condition_active = false,
+                    condition_started_at = NULL,
+                    last_evaluated_at = :now
+                WHERE condition_active = true AND room_id = :roomId AND device_key = :sensorId
+                """, params);
     }
 
     public void resolveAlertsOutsideRooms(String ruleId, Collection<String> rooms, Instant now) {
@@ -260,16 +300,16 @@ public class AlertRepository {
                 """ + roomFilter, params);
     }
 
-    private static MapSqlParameterSource instanceParams(String ruleId, String roomId, String deviceId) {
+    private static MapSqlParameterSource instanceParams(String ruleId, String roomId, String sensorId) {
         return new MapSqlParameterSource()
                 .addValue("ruleId", ruleId)
                 .addValue("roomId", roomId)
-                .addValue("deviceId", deviceId)
-                .addValue("deviceKey", deviceId == null ? "" : deviceId);
+                .addValue("sensorId", sensorId)
+                .addValue("deviceKey", sensorId == null ? "" : sensorId);
     }
 
     private static MapSqlParameterSource stateParams(AlertState state) {
-        return instanceParams(state.ruleId(), state.roomId(), state.deviceId())
+        return instanceParams(state.ruleId(), state.roomId(), state.sensorId())
                 .addValue("conditionActive", state.conditionActive())
                 .addValue(
                         "conditionStartedAt",
@@ -293,7 +333,7 @@ public class AlertRepository {
 
     public record EnvironmentSnapshot(
             String roomId,
-            String deviceId,
+            String sensorId,
             SensorType sensorType,
             Double temperature,
             Double humidity,
@@ -304,7 +344,7 @@ public class AlertRepository {
 
     public record OccupancySnapshot(
             String roomId,
-            String deviceId,
+            String sensorId,
             EventType eventType,
             Boolean present,
             Boolean open,
@@ -314,7 +354,7 @@ public class AlertRepository {
     public record AlertState(
             String ruleId,
             String roomId,
-            String deviceId,
+            String sensorId,
             boolean conditionActive,
             Instant conditionStartedAt,
             String lastValue,

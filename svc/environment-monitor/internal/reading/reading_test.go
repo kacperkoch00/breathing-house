@@ -1,6 +1,7 @@
 package reading
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,12 +26,8 @@ func TestDecodeAIR(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	if got.RoomID != "living-room" {
-		t.Fatalf("RoomID = %q, want living-room", got.RoomID)
-	}
-	if got.DeviceID == nil || *got.DeviceID != "sensor-1" {
-		t.Fatalf("DeviceID = %v, want sensor-1", got.DeviceID)
-	}
+	assertString(t, "RoomID", got.RoomID, "living-room")
+	assertString(t, "SensorID", got.SensorID, "sensor-1")
 	if got.SensorType != SensorTypeAir {
 		t.Fatalf("SensorType = %q, want AIR", got.SensorType)
 	}
@@ -79,8 +76,9 @@ func TestDecodeROOM(t *testing.T) {
 	if got.SensorType != SensorTypeRoom {
 		t.Fatalf("SensorType = %q, want ROOM", got.SensorType)
 	}
-	if got.DeviceID != nil {
-		t.Fatalf("DeviceID = %v, want nil", got.DeviceID)
+	assertString(t, "RoomID", got.RoomID, "kitchen")
+	if got.SensorID != nil {
+		t.Fatalf("SensorID = %v, want nil", got.SensorID)
 	}
 	if got.Temperature == nil || *got.Temperature != 21 {
 		t.Fatalf("Temperature = %v, want 21", got.Temperature)
@@ -96,6 +94,95 @@ func TestDecodeROOM(t *testing.T) {
 	}
 }
 
+func TestDecodeV1TrimsDeviceIDAndRoomID(t *testing.T) {
+	payload := []byte(`{"schemaVersion":1,"roomId":" kitchen ","deviceId":"  sensor-1 ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":2,"co2":3}}`)
+
+	got, err := Decode(payload, "sensor-data", 0, 1)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	assertString(t, "SensorID", got.SensorID, "sensor-1")
+	assertString(t, "RoomID", got.RoomID, "kitchen")
+}
+
+func TestDecodeV1BlankDeviceIDMeansNoSensor(t *testing.T) {
+	payload := []byte(`{"schemaVersion":1,"roomId":"kitchen","deviceId":"   ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":2,"co2":3}}`)
+
+	got, err := Decode(payload, "sensor-data", 0, 1)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if got.SensorID != nil {
+		t.Fatalf("SensorID = %v, want nil", got.SensorID)
+	}
+	assertString(t, "RoomID", got.RoomID, "kitchen")
+}
+
+func TestDecodeV2AIR(t *testing.T) {
+	payload := []byte(`{
+		"schemaVersion": 2,
+		"sensorId": "  sensor-9 ",
+		"type": "AIR",
+		"observedAt": "2026-10-03T08:00:00Z",
+		"receivedAt": "2026-10-03T08:00:01Z",
+		"values": {"temperature": 22.5, "humidity": 45, "co2": 700}
+	}`)
+
+	got, err := Decode(payload, "sensor-data", 1, 5)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	assertString(t, "SensorID", got.SensorID, "sensor-9")
+	if got.RoomID != nil {
+		t.Fatalf("RoomID = %v, want nil (resolved at persist time)", *got.RoomID)
+	}
+	if got.SensorType != SensorTypeAir {
+		t.Fatalf("SensorType = %q, want AIR", got.SensorType)
+	}
+	if got.CO2 == nil || *got.CO2 != 700 {
+		t.Fatalf("CO2 = %v, want 700", got.CO2)
+	}
+	if got.KafkaTopic != "sensor-data" || got.KafkaPartition != 1 || got.KafkaOffset != 5 {
+		t.Fatalf("Kafka metadata = %s/%d/%d", got.KafkaTopic, got.KafkaPartition, got.KafkaOffset)
+	}
+}
+
+func TestDecodeV2ROOM(t *testing.T) {
+	payload := []byte(`{
+		"schemaVersion": 2,
+		"sensorId": "room-sensor",
+		"type": "ROOM",
+		"observedAt": "2026-10-03T08:00:00Z",
+		"receivedAt": "2026-10-03T08:00:01Z",
+		"values": {"temperature": 21, "light": 120, "lightLevel": "NORMAL"}
+	}`)
+
+	got, err := Decode(payload, "sensor-data", 0, 1)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	assertString(t, "SensorID", got.SensorID, "room-sensor")
+	assertString(t, "LightLevel", got.LightLevel, "NORMAL")
+	if got.RoomID != nil {
+		t.Fatalf("RoomID = %v, want nil", *got.RoomID)
+	}
+}
+
+func TestDecodeV2AcceptsMaxLengthSensorID(t *testing.T) {
+	id := strings.Repeat("é", MaxSensorIDLength)
+	payload := []byte(`{"schemaVersion":2,"sensorId":"` + id + `","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`)
+
+	got, err := Decode(payload, "sensor-data", 0, 1)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	assertString(t, "SensorID", got.SensorID, id)
+}
+
 func TestDecodeValidationErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -106,8 +193,36 @@ func TestDecodeValidationErrors(t *testing.T) {
 			payload: `{`,
 		},
 		{
-			name:    "wrong schema",
-			payload: `{"schemaVersion":2,"roomId":"r","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+			name:    "unsupported schema",
+			payload: `{"schemaVersion":3,"sensorId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v1 missing room",
+			payload: `{"schemaVersion":1,"deviceId":"s","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 missing sensorId",
+			payload: `{"schemaVersion":2,"type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 blank sensorId",
+			payload: `{"schemaVersion":2,"sensorId":"  ","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 sensorId too long",
+			payload: `{"schemaVersion":2,"sensorId":"` + strings.Repeat("a", MaxSensorIDLength+1) + `","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 with roomId",
+			payload: `{"schemaVersion":2,"sensorId":"s","roomId":"kitchen","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 with deviceId",
+			payload: `{"schemaVersion":2,"sensorId":"s","deviceId":"d","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`,
+		},
+		{
+			name:    "v2 unsupported type",
+			payload: `{"schemaVersion":2,"sensorId":"s","type":"PRESENCE","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{}}`,
 		},
 		{
 			name:    "blank room",
@@ -138,5 +253,12 @@ func TestDecodeValidationErrors(t *testing.T) {
 				t.Fatal("Decode() error = nil, want error")
 			}
 		})
+	}
+}
+
+func assertString(t *testing.T, field string, got *string, want string) {
+	t.Helper()
+	if got == nil || *got != want {
+		t.Fatalf("%s = %v, want %q", field, got, want)
 	}
 }

@@ -1,13 +1,33 @@
 openapi: 3.0.3
 info:
   title: Home API
-  version: 1.0.0
+  version: 2.0.0
   description: >
-    Frontend-facing Breathing House API for room history, alerts, and sensor
-    gateway availability. This revision exposes read-only room discovery and
-    paginated environment and occupancy history, evaluates configurable alert
-    rules internally, and reports whether the sensor gateway is online from
-    Kafka STATUS heartbeats. Alert APIs are not implemented yet.
+    Frontend-facing Breathing House API for rooms, sensors, room history,
+    alerts, and sensor gateway availability.
+
+
+    Domain model: a room is an explicit, user-managed place (technical
+    roomId = server-generated UUID, editable name and description). A sensor
+    is a physical device discovered from incoming data (technical sensorId,
+    editable displayName). A sensor belongs to at most one room at a time and
+    can be moved or unassigned. Every history record snapshots the room the
+    sensor was assigned to when the record was ingested, so history stays
+    under the original room after a move and records ingested while a sensor
+    is unassigned are not returned by any room endpoint.
+
+
+    Breaking changes from 1.x: rooms are no longer discovered from history;
+    PATCH /rooms/{roomId} takes name/description instead of displayName;
+    history items expose sensorId instead of deviceId; sensors and room
+    assignment endpoints were added. The service evaluates configurable alert
+    rules internally (alert APIs are not implemented yet) and reports whether
+    the sensor gateway is online from Kafka STATUS heartbeats.
+
+tags:
+  - name: Rooms
+  - name: Sensors
+  - name: History
 
 paths:
   /live:
@@ -27,9 +47,9 @@ paths:
       operationId: getReady
       summary: Check whether PostgreSQL history and home_api tables are readable
       description: >
-        Returns ready when environment, occupancy, alert, gateway_heartbeat, and
-        room_metadata tables are queryable. Gateway online/offline state is not
-        part of readiness.
+        Returns ready when environment, occupancy, alert, alert_state,
+        gateway_heartbeat, room, and sensor tables are queryable. Gateway
+        online/offline state is not part of readiness.
       responses:
         '200':
           description: Required database tables are queryable
@@ -74,34 +94,87 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
   /api/v1/rooms:
+    post:
+      operationId: createRoom
+      tags: [Rooms]
+      summary: Create a room
+      description: >
+        Creates an empty room. roomId is a server-generated UUID and cannot be
+        chosen by the client. Names do not need to be unique.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+            example:
+              name: Living Room
+              description: Ground floor, south facing
+      responses:
+        '201':
+          description: Room created
+          headers:
+            Location:
+              description: URL of the created room
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+              example:
+                roomId: 0b0d8f06-7d51-4a54-9c6f-3a0f8c5e0d11
+                name: Living Room
+                description: Ground floor, south facing
+                sensorIds: []
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
     get:
       operationId: listRooms
-      summary: List discovered rooms with stable roomId and displayName
+      tags: [Rooms]
+      summary: List rooms
       description: >
-        Discovers rooms from environment and occupancy history. roomId is the
-        immutable technical identifier. displayName defaults to roomId until a
-        rename overrides it. Orphaned metadata rows are ignored.
+        Lists rooms stored in home_api.room (not rooms inferred from history),
+        ordered by name then roomId. Each room includes the sensorIds that are
+        assigned to it right now.
       responses:
         '200':
-          description: Sorted discovered rooms
+          description: Rooms with their current sensors
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RoomsResponse'
         '500':
-          description: Database failure
+          $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/rooms/{roomId}:
+    get:
+      operationId: getRoom
+      tags: [Rooms]
+      summary: Get a room
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '200':
+          description: The room with its current sensorIds
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
-  /api/v1/rooms/{roomId}:
+                $ref: '#/components/schemas/Room'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
     patch:
       operationId: updateRoom
-      summary: Rename a discovered room's displayName
+      tags: [Rooms]
+      summary: Update a room's name and/or description
       description: >
-        Updates presentation metadata only. roomId remains stable for history,
-        alerts, and Kafka. Unknown roomIds that have never appeared in history
-        cannot be created through this endpoint.
+        Partial update. At least one of name or description must be present;
+        an empty patch is rejected. An omitted field is left unchanged; an
+        explicit null description (or one that is blank after trimming) clears
+        it. roomId never changes. Rooms cannot be deleted.
       parameters:
         - $ref: '#/components/parameters/RoomId'
       requestBody:
@@ -111,36 +184,153 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateRoomRequest'
             example:
-              displayName: Living Room
+              name: Salon
       responses:
         '200':
-          description: Updated room summary
+          description: Updated room
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomSummary'
+                $ref: '#/components/schemas/Room'
         '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Room has never appeared in history
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/NotFound'
         '500':
-          description: Database failure
+          $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/rooms/{roomId}/sensors/{sensorId}:
+    put:
+      operationId: assignSensorToRoom
+      tags: [Sensors]
+      summary: Assign a sensor to a room
+      description: >
+        Atomically assigns the sensor to the room. A sensor is in at most one
+        room, so if it was in another room it is moved. Moving or unassigning
+        resolves the sensor's active alerts for the old room and re-evaluates
+        composite room rules; alerts are never carried to the new room.
+        Assigning a sensor to the room it is already in is a no-op.
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+        - $ref: '#/components/parameters/SensorId'
+      responses:
+        '200':
+          description: The updated sensor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+    delete:
+      operationId: unassignSensorFromRoom
+      tags: [Sensors]
+      summary: Unassign a sensor from a room
+      description: >
+        Leaves the sensor unassigned. Readings it sends while unassigned are
+        stored without a room and do not appear on any room history endpoint
+        or create room alerts.
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+        - $ref: '#/components/parameters/SensorId'
+      responses:
+        '200':
+          description: The updated (unassigned) sensor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The sensor is not currently assigned to this room
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+              example:
+                error: conflict
+                message: Sensor 'air-1' is not currently assigned to room 'room-b'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/sensors:
+    get:
+      operationId: listSensors
+      tags: [Sensors]
+      summary: List discovered sensors
+      description: >
+        Lists sensors that have sent data (they are registered automatically by
+        the monitors) ordered by sensorId. types is derived from the distinct
+        sensor_type / event_type values found in history for that sensor.
+      responses:
+        '200':
+          description: Discovered sensors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensorsResponse'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+  /api/v1/sensors/{sensorId}:
+    get:
+      operationId: getSensor
+      tags: [Sensors]
+      summary: Get a discovered sensor
+      parameters:
+        - $ref: '#/components/parameters/SensorId'
+      responses:
+        '200':
+          description: The sensor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+    patch:
+      operationId: updateSensor
+      tags: [Sensors]
+      summary: Rename a discovered sensor
+      description: >
+        Updates the presentation displayName only. Sensors cannot be created
+        through the API, and sensorId never changes. Duplicate display names
+        are allowed.
+      parameters:
+        - $ref: '#/components/parameters/SensorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSensorRequest'
+            example:
+              displayName: Kitchen air
+      responses:
+        '200':
+          description: Updated sensor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
   /api/v1/rooms/{roomId}/environment-readings:
     get:
       operationId: listEnvironmentReadings
+      tags: [History]
       summary: List paginated environment readings for a room
+      description: >
+        Returns readings whose room snapshot is roomId. A reading stays under
+        the room the sensor was in when it was ingested, even after the sensor
+        is moved. Readings ingested while the sensor was unassigned are
+        omitted. An unknown roomId returns an empty page.
       parameters:
         - $ref: '#/components/parameters/RoomId'
         - name: sensorType
@@ -159,21 +349,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/EnvironmentReadingPage'
         '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '500':
-          description: Database failure
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/DatabaseFailure'
   /api/v1/rooms/{roomId}/occupancy-events:
     get:
       operationId: listOccupancyEvents
+      tags: [History]
       summary: List paginated occupancy events for a room
+      description: >
+        Same room-snapshot semantics as the environment readings endpoint.
       parameters:
         - $ref: '#/components/parameters/RoomId'
         - name: eventType
@@ -192,24 +377,47 @@ paths:
               schema:
                 $ref: '#/components/schemas/OccupancyEventPage'
         '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '500':
-          description: Database failure
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/DatabaseFailure'
 
 components:
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    NotFound:
+      description: Room or sensor not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            error: not_found
+            message: Room 'ghost' was not found
+    DatabaseFailure:
+      description: Database failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
   parameters:
     RoomId:
       name: roomId
       in: path
       required: true
+      description: Technical room identifier (server-generated UUID)
+      schema:
+        type: string
+        minLength: 1
+    SensorId:
+      name: sensorId
+      in: path
+      required: true
+      description: Technical sensor identifier reported by the device
       schema:
         type: string
         minLength: 1
@@ -249,28 +457,54 @@ components:
     EventType:
       type: string
       enum: [PRESENCE, OPENING]
-    RoomSummary:
+    Room:
       type: object
-      required: [roomId, displayName]
+      required: [roomId, name, description, sensorIds]
       properties:
         roomId:
           type: string
-          description: Immutable technical room identifier
-          minLength: 1
-        displayName:
+          format: uuid
+          description: Immutable technical identifier generated by the server
+        name:
           type: string
-          description: Mutable presentation name; defaults to roomId when unset
+          description: Mutable presentation name; not unique
           minLength: 1
           maxLength: 100
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+        sensorIds:
+          type: array
+          description: Sensors currently assigned to this room, ordered by sensorId
+          items:
+            type: string
+    CreateRoomRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Trimmed before persistence; must be nonblank
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          nullable: true
+          description: Trimmed before persistence; blank is stored as null
+          maxLength: 500
     UpdateRoomRequest:
       type: object
-      required: [displayName]
+      minProperties: 1
       properties:
-        displayName:
+        name:
           type: string
-          description: Friendly room name; trimmed before persistence
           minLength: 1
           maxLength: 100
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
     RoomsResponse:
       type: object
       required: [rooms]
@@ -278,7 +512,51 @@ components:
         rooms:
           type: array
           items:
-            $ref: '#/components/schemas/RoomSummary'
+            $ref: '#/components/schemas/Room'
+    SensorKind:
+      type: string
+      description: >
+        Kind of data observed for a sensor in history. ROOM and AIR come from
+        environment readings, PRESENCE and OPENING from occupancy events.
+      enum: [ROOM, AIR, OPENING, PRESENCE]
+    Sensor:
+      type: object
+      required: [sensorId, displayName, types, roomId]
+      properties:
+        sensorId:
+          type: string
+          description: Immutable technical identifier reported by the device
+        displayName:
+          type: string
+          description: Mutable presentation name; defaults to sensorId; not unique
+          minLength: 1
+          maxLength: 100
+        types:
+          type: array
+          description: Distinct kinds of data seen for this sensor in history, sorted
+          items:
+            $ref: '#/components/schemas/SensorKind'
+        roomId:
+          type: string
+          nullable: true
+          description: Room the sensor is currently assigned to; null when unassigned
+    SensorsResponse:
+      type: object
+      required: [sensors]
+      properties:
+        sensors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Sensor'
+    UpdateSensorRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+          description: Trimmed before persistence; must be nonblank
+          minLength: 1
+          maxLength: 100
     EnvironmentReading:
       type: object
       required:
@@ -294,9 +572,13 @@ components:
           format: int64
         roomId:
           type: string
-        deviceId:
+          description: Room the sensor was assigned to when this record was ingested
+        sensorId:
           type: string
           nullable: true
+          description: >
+            Sensor that produced the record. Null for legacy records that never
+            carried a sensor identity.
         sensorType:
           $ref: '#/components/schemas/SensorType'
         temperature:
@@ -338,9 +620,13 @@ components:
           format: int64
         roomId:
           type: string
-        deviceId:
+          description: Room the sensor was assigned to when this record was ingested
+        sensorId:
           type: string
           nullable: true
+          description: >
+            Sensor that produced the record. Null for legacy records that never
+            carried a sensor identity.
         eventType:
           $ref: '#/components/schemas/EventType'
         present:

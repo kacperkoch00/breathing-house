@@ -5,18 +5,28 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	SchemaVersion     = 1
+	SchemaVersionV1   = 1
+	SchemaVersionV2   = 2
 	EventTypePresence = "PRESENCE"
 	EventTypeOpening  = "OPENING"
+
+	maxSensorIDLength = 200
 )
 
 // Event is the internal model persisted to occupancy.occupancy_event.
+//
+// SensorID is the stable sensor identity: the trimmed v1 deviceId (nil when
+// absent) or the required v2 sensorId. RoomID is only set for v1 events, where
+// it carries the legacy envelope roomId; for v2 the room is resolved at persist
+// time from home_api.sensor.
 type Event struct {
-	RoomID         string
-	DeviceID       *string
+	SchemaVersion  int
+	SensorID       *string
+	RoomID         *string
 	EventType      string
 	Present        *bool
 	Open           *bool
@@ -29,8 +39,9 @@ type Event struct {
 
 type envelope struct {
 	SchemaVersion int             `json:"schemaVersion"`
-	RoomID        string          `json:"roomId"`
+	RoomID        *string         `json:"roomId"`
 	DeviceID      *string         `json:"deviceId"`
+	SensorID      *string         `json:"sensorId"`
 	Type          string          `json:"type"`
 	ObservedAt    string          `json:"observedAt"`
 	ReceivedAt    string          `json:"receivedAt"`
@@ -46,19 +57,36 @@ type openingValues struct {
 }
 
 // Decode validates a Kafka payload and maps it to an Event with Kafka metadata.
+// Schema versions 1 and 2 are accepted.
 func Decode(payload []byte, topic string, partition int32, offset int64) (Event, error) {
 	var env envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return Event{}, fmt.Errorf("decode envelope: %w", err)
 	}
 
-	if env.SchemaVersion != SchemaVersion {
-		return Event{}, fmt.Errorf("schemaVersion: want %d, got %d", SchemaVersion, env.SchemaVersion)
-	}
-
-	roomID := strings.TrimSpace(env.RoomID)
-	if roomID == "" {
-		return Event{}, fmt.Errorf("roomId: required")
+	var sensorID, roomID *string
+	switch env.SchemaVersion {
+	case SchemaVersionV1:
+		if env.RoomID == nil || strings.TrimSpace(*env.RoomID) == "" {
+			return Event{}, fmt.Errorf("roomId: required")
+		}
+		legacyRoomID := strings.TrimSpace(*env.RoomID)
+		roomID = &legacyRoomID
+		sensorID = normalizeOptionalString(env.DeviceID)
+	case SchemaVersionV2:
+		if env.RoomID != nil {
+			return Event{}, fmt.Errorf("roomId: not allowed in schemaVersion %d", SchemaVersionV2)
+		}
+		if env.DeviceID != nil {
+			return Event{}, fmt.Errorf("deviceId: not allowed in schemaVersion %d", SchemaVersionV2)
+		}
+		var err error
+		sensorID, err = decodeSensorID(env.SensorID)
+		if err != nil {
+			return Event{}, err
+		}
+	default:
+		return Event{}, fmt.Errorf("schemaVersion: want %d or %d, got %d", SchemaVersionV1, SchemaVersionV2, env.SchemaVersion)
 	}
 
 	if env.Type != EventTypePresence && env.Type != EventTypeOpening {
@@ -76,8 +104,9 @@ func Decode(payload []byte, topic string, partition int32, offset int64) (Event,
 	}
 
 	event := Event{
+		SchemaVersion:  env.SchemaVersion,
+		SensorID:       sensorID,
 		RoomID:         roomID,
-		DeviceID:       normalizeOptionalString(env.DeviceID),
 		EventType:      env.Type,
 		ObservedAt:     observedAt,
 		ReceivedAt:     receivedAt,
@@ -98,6 +127,18 @@ func Decode(payload []byte, topic string, partition int32, offset int64) (Event,
 	}
 
 	return event, nil
+}
+
+func decodeSensorID(raw *string) (*string, error) {
+	sensorID := normalizeOptionalString(raw)
+	if sensorID == nil {
+		return nil, fmt.Errorf("sensorId: required")
+	}
+	if utf8.RuneCountInString(*sensorID) > maxSensorIDLength {
+		return nil, fmt.Errorf("sensorId: must be at most %d characters", maxSensorIDLength)
+	}
+
+	return sensorID, nil
 }
 
 func decodePresenceValues(raw json.RawMessage, event *Event) error {

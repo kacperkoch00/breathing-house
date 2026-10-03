@@ -27,6 +27,24 @@ const validAIRPayload = `{
 	"values": {"temperature": 22.5, "humidity": 45, "co2": 700}
 }`
 
+const validV2AIRPayload = `{
+	"schemaVersion": 2,
+	"sensorId": "sensor-2",
+	"type": "AIR",
+	"observedAt": "2026-10-03T08:00:00Z",
+	"receivedAt": "2026-10-03T08:00:01Z",
+	"values": {"temperature": 22.5, "humidity": 45, "co2": 700}
+}`
+
+const validV1RoomPayloadWithoutDevice = `{
+	"schemaVersion": 1,
+	"roomId": "kitchen",
+	"type": "ROOM",
+	"observedAt": "2026-10-03T08:00:00Z",
+	"receivedAt": "2026-10-03T08:00:01Z",
+	"values": {"temperature": 21, "light": 120, "lightLevel": "NORMAL"}
+}`
+
 func newTestKafkaMetrics() *metrics.Kafka {
 	return metrics.NewKafka(prometheus.NewRegistry())
 }
@@ -241,6 +259,133 @@ func TestProcessFetchesRetriesSameRecordOnInsertFailure(t *testing.T) {
 	}
 	if !readiness.IsReady() {
 		t.Fatal("readiness = false, want true after recovery")
+	}
+}
+
+func processWithPayloads(t *testing.T, store readingStore, client kafkaClient, payloads ...string) bool {
+	t.Helper()
+
+	records := make([]*kgo.Record, len(payloads))
+	for i, payload := range payloads {
+		records[i] = &kgo.Record{Topic: "sensor-data", Partition: 0, Offset: int64(i + 1), Value: []byte(payload)}
+	}
+
+	return callProcessFetches(
+		context.Background(), client, &mockKafkaFetches{records: records},
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	)
+}
+
+func TestProcessFetchesPassesSchemaVersionsToStore(t *testing.T) {
+	store := &mockStore{}
+
+	if !processWithPayloads(t, store, &mockKafkaClient{}, validAIRPayload, validV2AIRPayload, validV1RoomPayloadWithoutDevice) {
+		t.Fatal("processFetches() = false, want true")
+	}
+
+	got := store.readings()
+	if len(got) != 3 {
+		t.Fatalf("inserts = %d, want 3", len(got))
+	}
+
+	v1 := got[0]
+	if v1.SensorID == nil || *v1.SensorID != "sensor-1" || v1.RoomID == nil || *v1.RoomID != "kitchen" {
+		t.Fatalf("v1 sensor/room = %v/%v, want sensor-1/kitchen", v1.SensorID, v1.RoomID)
+	}
+
+	v2 := got[1]
+	if v2.SensorID == nil || *v2.SensorID != "sensor-2" || v2.RoomID != nil {
+		t.Fatalf("v2 sensor/room = %v/%v, want sensor-2/nil", v2.SensorID, v2.RoomID)
+	}
+
+	legacy := got[2]
+	if legacy.SensorID != nil || legacy.RoomID == nil || *legacy.RoomID != "kitchen" {
+		t.Fatalf("v1 without device sensor/room = %v/%v, want nil/kitchen", legacy.SensorID, legacy.RoomID)
+	}
+}
+
+func TestProcessFetchesSkipsAndCommitsV2WithLegacyIdentityFields(t *testing.T) {
+	store := &mockStore{}
+	var committed int
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			committed += len(records)
+			return nil
+		},
+	}
+
+	payload := `{"schemaVersion":2,"sensorId":"s","roomId":"kitchen","type":"AIR","observedAt":"2026-10-03T08:00:00Z","receivedAt":"2026-10-03T08:00:01Z","values":{"temperature":1,"humidity":1,"co2":1}}`
+	if !processWithPayloads(t, store, client, payload) {
+		t.Fatal("processFetches() = false, want true")
+	}
+	if store.count() != 0 {
+		t.Fatalf("inserts = %d, want 0", store.count())
+	}
+	if committed != 1 {
+		t.Fatalf("committed = %d, want 1", committed)
+	}
+}
+
+func TestProcessFetchesCommitsOnlyAfterSuccessfulPersist(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	failures := 2
+
+	store := &mockStore{insert: func(_ context.Context, r reading.Reading) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if failures > 0 {
+			failures--
+			events = append(events, "insert-fail")
+			return errors.New("db down")
+		}
+		events = append(events, "insert-ok")
+		return nil
+	}}
+	client := &mockKafkaClient{
+		commitRecords: func(_ context.Context, records ...*kgo.Record) error {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, "commit")
+			return nil
+		},
+	}
+
+	if !processWithPayloads(t, store, client, validV2AIRPayload) {
+		t.Fatal("processFetches() = false, want true")
+	}
+
+	want := []string{"insert-fail", "insert-fail", "insert-ok", "commit"}
+	if strings.Join(events, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+}
+
+func TestProcessFetchesRedeliveredOffsetIsIdempotent(t *testing.T) {
+	stored := map[int64]reading.Reading{}
+	store := &mockStore{insert: func(_ context.Context, r reading.Reading) error {
+		if _, ok := stored[r.KafkaOffset]; !ok {
+			stored[r.KafkaOffset] = r
+		}
+		return nil
+	}}
+
+	fetches := &mockKafkaFetches{records: []*kgo.Record{
+		{Topic: "sensor-data", Partition: 0, Offset: 5, Value: []byte(validV2AIRPayload)},
+		{Topic: "sensor-data", Partition: 0, Offset: 5, Value: []byte(validV2AIRPayload)},
+	}}
+
+	got := callProcessFetches(
+		context.Background(), &mockKafkaClient{}, fetches,
+		time.Second, time.Millisecond, time.Millisecond,
+		newTestKafkaMetrics(), store, handler.NewReadiness(),
+	)
+	if !got {
+		t.Fatal("processFetches() = false, want true")
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored = %d, want 1", len(stored))
 	}
 }
 

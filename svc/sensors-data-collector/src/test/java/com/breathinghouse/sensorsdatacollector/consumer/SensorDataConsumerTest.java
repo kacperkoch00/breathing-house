@@ -67,7 +67,7 @@ class SensorDataConsumerTest {
 
     @Test
     void shouldSubscribeWithConfiguredQosWhenSessionAbsent() {
-        List<String> mockTopics = List.of("home/+/room", "home/+/air", "home/+/presence");
+        List<String> mockTopics = List.of("home/sensors/room", "home/sensors/air", "home/sensors/presence");
         when(config.getConsumerTopics()).thenReturn(mockTopics);
         when(config.getQos()).thenReturn(1);
         when(hiveMqClient.subscribe(any(Mqtt5Subscribe.class)))
@@ -112,7 +112,7 @@ class SensorDataConsumerTest {
     @Test
     void shouldRegisterPublishesOnlyOnceAcrossReconnects() {
         when(hiveMqClient.connect()).thenReturn(CompletableFuture.completedFuture(mock(Mqtt5ConnAck.class)));
-        when(config.getConsumerTopics()).thenReturn(List.of("home/+/room"));
+        when(config.getConsumerTopics()).thenReturn(List.of("home/sensors/room"));
         when(config.getQos()).thenReturn(1);
         when(hiveMqClient.subscribe(any(Mqtt5Subscribe.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(Mqtt5SubAck.class)));
@@ -142,7 +142,7 @@ class SensorDataConsumerTest {
 
         Mqtt5Publish mockPublish = mock(Mqtt5Publish.class);
         when(mockPublish.getPayloadAsBytes()).thenReturn("{\"test\":1}".getBytes(StandardCharsets.UTF_8));
-        when(mockPublish.getTopic()).thenReturn(MqttTopic.of("home/kitchen/air"));
+        when(mockPublish.getTopic()).thenReturn(MqttTopic.of("home/sensors/air"));
 
         callbackCaptor.getValue().accept(mockPublish);
 

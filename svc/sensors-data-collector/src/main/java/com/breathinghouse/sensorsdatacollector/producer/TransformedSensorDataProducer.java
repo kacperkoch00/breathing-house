@@ -29,7 +29,7 @@ public class TransformedSensorDataProducer {
 
     public void send(SensorData sensorData) {
         String topic = getTopic(sensorData.type());
-        String key = sensorData.roomId();
+        String key = sensorData.type() == SensorType.STATUS ? sensorData.roomId() : sensorData.sensorId();
 
         log.debug("Sending transformed sensor data to Kafka topic {}: {}", topic, sensorData);
 

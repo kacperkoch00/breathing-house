@@ -60,6 +60,8 @@ class HistoryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].id").value(123))
                 .andExpect(jsonPath("$.items[0].roomId").value("living-room"))
+                .andExpect(jsonPath("$.items[0].sensorId").value("air-1"))
+                .andExpect(jsonPath("$.items[0].deviceId").doesNotExist())
                 .andExpect(jsonPath("$.items[0].sensorType").value("AIR"))
                 .andExpect(jsonPath("$.items[0].temperature").value(22.5))
                 .andExpect(jsonPath("$.items[0].light").value(nullValue()))
@@ -88,6 +90,8 @@ class HistoryControllerTest {
         mockMvc.perform(get("/api/v1/rooms/living-room/occupancy-events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].roomId").value("living-room"))
+                .andExpect(jsonPath("$.items[0].sensorId").value("presence-1"))
+                .andExpect(jsonPath("$.items[0].deviceId").doesNotExist())
                 .andExpect(jsonPath("$.items[0].present").value(false))
                 .andExpect(jsonPath("$.items[0].open").value(nullValue()))
                 .andExpect(jsonPath("$.items[0].eventType").value("PRESENCE"));

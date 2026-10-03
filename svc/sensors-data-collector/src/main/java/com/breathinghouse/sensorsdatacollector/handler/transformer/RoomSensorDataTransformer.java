@@ -34,10 +34,11 @@ public class RoomSensorDataTransformer implements SensorDataTransformer {
 
     @Override
     public SensorData transform(String payload, String roomId) {
-        log.debug("Transforming room sensor payload {} for room: {}", payload, roomId);
+        log.debug("Transforming room sensor payload {}", payload);
 
         try {
             Map<String, Object> values = objectMapper.readValue(payload, new TypeReference<>() {});
+            String sensorId = PayloadRules.requireSensorId(values);
             double temperature = PayloadRules.requireNumber(values, "temperature");
             PayloadRules.requireInRange(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, "temperature");
 
@@ -47,7 +48,7 @@ public class RoomSensorDataTransformer implements SensorDataTransformer {
             values = new HashMap<>(values);
             values.put("lightLevel", determineLightLevel(light));
 
-            return SensorDataFactory.create(roomId, SensorType.ROOM, values);
+            return SensorDataFactory.createSensorData(SensorType.ROOM, sensorId, values.get("timestamp"), values);
         } catch (JsonProcessingException e) {
             throw new InvalidSensorPayloadException("Invalid room sensor payload", e);
         }

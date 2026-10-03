@@ -10,8 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 
-import java.sql.Timestamp;
-import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,35 +30,54 @@ class RoomServiceIntegrationTest {
 
     @BeforeEach
     void clean() {
-        jdbc.update("DELETE FROM home_api.room_metadata");
-        jdbc.update("DELETE FROM environment.environment_reading");
-        jdbc.update("DELETE FROM occupancy.occupancy_event");
+        jdbc.update("DELETE FROM home_api.sensor");
+        jdbc.update("DELETE FROM home_api.room");
     }
 
     @Test
-    void unknownRoomIsRejectedAndNoMetadataRowIsInserted() {
-        assertThatThrownBy(() -> roomService.rename("ghost", "Ghost"))
+    void createPersistsRoomWithServerGeneratedUuid() {
+        RoomSummary created = roomService.createRoom("Living Room", "Open plan");
+
+        assertThat(UUID.fromString(created.roomId())).isNotNull();
+        assertThat(created.name()).isEqualTo("Living Room");
+        assertThat(created.description()).isEqualTo("Open plan");
+        assertThat(created.sensorIds()).isEmpty();
+        assertThat(roomService.getRoom(created.roomId())).isEqualTo(created);
+    }
+
+    @Test
+    void duplicateNamesGetDistinctRoomIds() {
+        RoomSummary first = roomService.createRoom("Office", null);
+        RoomSummary second = roomService.createRoom("Office", null);
+
+        assertThat(first.roomId()).isNotEqualTo(second.roomId());
+        assertThat(roomService.listRooms()).hasSize(2);
+    }
+
+    @Test
+    void createListGetPatchRoundTrip() {
+        RoomSummary created = roomService.createRoom("Living Room", "Open plan");
+        jdbc.update("INSERT INTO home_api.sensor (sensor_id, display_name, room_id) VALUES ('air-1', 'air-1', ?)",
+                created.roomId());
+
+        RoomSummary renamed = roomService.updateRoom(created.roomId(), new RoomPatch("Salon", false, null));
+        assertThat(renamed.name()).isEqualTo("Salon");
+        assertThat(renamed.description()).isEqualTo("Open plan");
+        assertThat(renamed.sensorIds()).containsExactly("air-1");
+
+        RoomSummary cleared = roomService.updateRoom(created.roomId(), new RoomPatch(null, true, null));
+        assertThat(cleared.name()).isEqualTo("Salon");
+        assertThat(cleared.description()).isNull();
+
+        assertThat(roomService.listRooms()).containsExactly(cleared);
+    }
+
+    @Test
+    void patchingUnknownRoomDoesNotCreateIt() {
+        assertThatThrownBy(() -> roomService.updateRoom("ghost", new RoomPatch("Ghost", false, null)))
                 .isInstanceOf(RoomNotFoundException.class);
 
-        Integer count = jdbc.queryForObject("SELECT count(*) FROM home_api.room_metadata", Integer.class);
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM home_api.room", Integer.class);
         assertThat(count).isZero();
-    }
-
-    @Test
-    void trimsWhitespaceBeforePersistence() {
-        Instant observed = Instant.parse("2026-10-03T10:00:00Z");
-        jdbc.update("""
-                INSERT INTO environment.environment_reading (
-                  room_id, sensor_type, co2, observed_at, received_at
-                ) VALUES ('living-room', 'AIR', 500, ?, ?)
-                """, Timestamp.from(observed), Timestamp.from(observed));
-
-        RoomSummary summary = roomService.rename("living-room", "  Living Room  ");
-
-        assertThat(summary.displayName()).isEqualTo("Living Room");
-        String stored = jdbc.queryForObject(
-                "SELECT display_name FROM home_api.room_metadata WHERE room_id = 'living-room'",
-                String.class);
-        assertThat(stored).isEqualTo("Living Room");
     }
 }

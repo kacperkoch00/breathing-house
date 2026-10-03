@@ -25,8 +25,8 @@ class MqttIntegrationIT {
 
     private static final String MQTT_HOST = "127.0.0.1";
     private static final int MQTT_PORT = 1883;
-    private static final String TOPIC = "home/kitchen/air";
-    private static final String PAYLOAD = "{\"temperature\":22.5}";
+    private static final String TOPIC = "home/sensors/air";
+    private static final String PAYLOAD = "{\"sensorId\":\"air-1\",\"temperature\":22.5}";
 
     @Autowired
     private MessageChannel mqttInputChannel;
