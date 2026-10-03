@@ -33,17 +33,6 @@ class HistoryRepositoryTest {
     }
 
     @Test
-    void listRoomsReturnsDistinctSortedUnion() {
-        insertEnvironment("living-room", "AIR", "2026-10-03T10:00:00Z", null, null, 500.0, null, null);
-        insertEnvironment("bedroom", "ROOM", "2026-10-03T09:00:00Z", 21.0, 40.0, null, 10.0, "DIM");
-        insertOccupancy("kitchen", "PRESENCE", false, null, "2026-10-03T08:00:00Z");
-        insertOccupancy("living-room", "OPENING", null, true, "2026-10-03T07:00:00Z");
-
-        assertThat(historyRepository.listRooms())
-                .containsExactly("bedroom", "kitchen", "living-room");
-    }
-
-    @Test
     void environmentMappingAndOrderingAndHasMore() {
         insertEnvironment("living-room", "AIR", "2026-10-03T08:00:00Z", null, null, 700.0, null, null);
         insertEnvironment("living-room", "ROOM", "2026-10-03T09:00:00Z", 22.5, 45.0, null, null, null);

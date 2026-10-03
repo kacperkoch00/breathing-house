@@ -1,11 +1,14 @@
 package com.breathinghouse.homeapi.history;
 
+import com.breathinghouse.homeapi.rooms.RoomNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -21,11 +24,19 @@ public class HistoryExceptionHandler {
             ConstraintViolationException.class,
             MethodArgumentTypeMismatchException.class,
             MissingServletRequestParameterException.class,
-            IllegalArgumentException.class
+            IllegalArgumentException.class,
+            MethodArgumentNotValidException.class,
+            HttpMessageNotReadableException.class
     })
     public ResponseEntity<ApiError> badRequest(Exception ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ApiError("bad_request", safeMessage(ex)));
+    }
+
+    @ExceptionHandler(RoomNotFoundException.class)
+    public ResponseEntity<ApiError> notFound(RoomNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiError("not_found", ex.getMessage()));
     }
 
     @ExceptionHandler(DataAccessException.class)
@@ -36,6 +47,12 @@ public class HistoryExceptionHandler {
     }
 
     private static String safeMessage(Exception ex) {
+        if (ex instanceof MethodArgumentNotValidException manve) {
+            return manve.getBindingResult().getFieldErrors().stream()
+                    .findFirst()
+                    .map(error -> error.getField() + " " + error.getDefaultMessage())
+                    .orElse("Invalid request");
+        }
         String message = ex.getMessage();
         if (message == null || message.isBlank()) {
             return "Invalid request";
