@@ -80,9 +80,7 @@ func checkKafkaReadiness(ctx context.Context, client kafkaClient, logger *zap.Lo
 		readiness.SetKafkaReady(false)
 		logger.Error("Kafka is not ready", zap.Error(err))
 
-		select {
-		case <-time.After(retryDelay):
-		case <-ctx.Done():
+		if !waitRetry(ctx, retryDelay) {
 			readiness.SetKafkaReady(false)
 			return
 		}
@@ -93,8 +91,9 @@ func PollEvents(
 	ctx context.Context,
 	client *kgo.Client,
 	logger *zap.Logger,
-	retryDelay time.Duration,
+	kafkaRetryDelay time.Duration,
 	dbTimeout time.Duration,
+	dbRetryDelay time.Duration,
 	kafkaMetrics *metrics.Kafka,
 	store readingStore,
 	readiness *handler.Readiness,
@@ -103,8 +102,9 @@ func PollEvents(
 		ctx,
 		&franzKafkaClient{client: client},
 		logger,
-		retryDelay,
+		kafkaRetryDelay,
 		dbTimeout,
+		dbRetryDelay,
 		kafkaMetrics,
 		store,
 		readiness,
@@ -115,8 +115,9 @@ func pollEvents(
 	ctx context.Context,
 	client kafkaClient,
 	logger *zap.Logger,
-	retryDelay time.Duration,
+	kafkaRetryDelay time.Duration,
 	dbTimeout time.Duration,
+	dbRetryDelay time.Duration,
 	kafkaMetrics *metrics.Kafka,
 	store readingStore,
 	readiness *handler.Readiness,
@@ -130,11 +131,8 @@ func pollEvents(
 			return
 		}
 
-		if !processFetches(ctx, client, fetches, logger, dbTimeout, kafkaMetrics, store, readiness) {
-			select {
-			case <-time.After(retryDelay):
-				continue
-			case <-ctx.Done():
+		if !processFetches(ctx, client, fetches, logger, dbTimeout, dbRetryDelay, kafkaRetryDelay, kafkaMetrics, store, readiness) {
+			if !waitRetry(ctx, kafkaRetryDelay) {
 				return
 			}
 		}
@@ -147,6 +145,8 @@ func processFetches(
 	fetches kafkaFetches,
 	logger *zap.Logger,
 	dbTimeout time.Duration,
+	dbRetryDelay time.Duration,
+	kafkaRetryDelay time.Duration,
 	kafkaMetrics *metrics.Kafka,
 	store readingStore,
 	readiness *handler.Readiness,
@@ -185,38 +185,17 @@ func processFetches(
 				zap.Int64("offset", record.Offset),
 				zap.Error(err),
 			)
-			if err := client.CommitRecords(ctx, record); err != nil {
-				logger.Error("failed to commit skipped Kafka record", zap.Error(err))
+			if !commitRecordWithRetry(ctx, client, record, logger, kafkaRetryDelay, "failed to commit skipped Kafka record") {
 				return false
 			}
 			continue
 		}
 
-		insertCtx, cancel := context.WithTimeout(ctx, dbTimeout)
-		err = store.InsertReading(insertCtx, decoded)
-		cancel()
-		if err != nil {
-			readiness.SetDatabaseReady(false)
-			logger.Error(
-				"failed to persist environment reading",
-				zap.String("topic", record.Topic),
-				zap.Int32("partition", record.Partition),
-				zap.Int64("offset", record.Offset),
-				zap.Error(err),
-			)
+		if !persistReadingWithRetry(ctx, store, decoded, record, logger, dbTimeout, dbRetryDelay, readiness) {
 			return false
 		}
 
-		readiness.SetDatabaseReady(true)
-
-		if err := client.CommitRecords(ctx, record); err != nil {
-			logger.Error(
-				"failed to commit Kafka record after persist",
-				zap.String("topic", record.Topic),
-				zap.Int32("partition", record.Partition),
-				zap.Int64("offset", record.Offset),
-				zap.Error(err),
-			)
+		if !commitRecordWithRetry(ctx, client, record, logger, kafkaRetryDelay, "failed to commit Kafka record after persist") {
 			return false
 		}
 
@@ -231,4 +210,75 @@ func processFetches(
 	}
 
 	return true
+}
+
+func persistReadingWithRetry(
+	ctx context.Context,
+	store readingStore,
+	decoded reading.Reading,
+	record *kgo.Record,
+	logger *zap.Logger,
+	dbTimeout time.Duration,
+	dbRetryDelay time.Duration,
+	readiness *handler.Readiness,
+) bool {
+	for {
+		insertCtx, cancel := context.WithTimeout(ctx, dbTimeout)
+		err := store.InsertReading(insertCtx, decoded)
+		cancel()
+		if err == nil {
+			readiness.SetDatabaseReady(true)
+			return true
+		}
+
+		readiness.SetDatabaseReady(false)
+		logger.Error(
+			"failed to persist environment reading",
+			zap.String("topic", record.Topic),
+			zap.Int32("partition", record.Partition),
+			zap.Int64("offset", record.Offset),
+			zap.Error(err),
+		)
+
+		if !waitRetry(ctx, dbRetryDelay) {
+			return false
+		}
+	}
+}
+
+func commitRecordWithRetry(
+	ctx context.Context,
+	client kafkaClient,
+	record *kgo.Record,
+	logger *zap.Logger,
+	retryDelay time.Duration,
+	errorMessage string,
+) bool {
+	for {
+		err := client.CommitRecords(ctx, record)
+		if err == nil {
+			return true
+		}
+
+		logger.Error(
+			errorMessage,
+			zap.String("topic", record.Topic),
+			zap.Int32("partition", record.Partition),
+			zap.Int64("offset", record.Offset),
+			zap.Error(err),
+		)
+
+		if !waitRetry(ctx, retryDelay) {
+			return false
+		}
+	}
+}
+
+func waitRetry(ctx context.Context, delay time.Duration) bool {
+	select {
+	case <-time.After(delay):
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
