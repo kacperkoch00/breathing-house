@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -239,6 +240,301 @@ class AlertEvaluationServiceTest {
                 eq("true"),
                 eq(NOW),
                 anyString());
+    }
+
+    @Test
+    void compositeAllActivatesOnlyWhenEveryConditionIsTrue() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        ValidatedRule rule = configuration.alerts().getFirst();
+        stubCompositeSnapshots(1450.0, 29.5, NOW.minusSeconds(60), NOW.minusSeconds(90));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        verify(repository).createAlert(
+                eq(rule),
+                eq("living-room"),
+                isNull(),
+                contains("living-room"),
+                eq("{\"co2\":\"1450\",\"temperature\":\"29.5\"}"),
+                eq(NOW),
+                anyString());
+    }
+
+    @Test
+    void compositeAllDoesNotActivateWhenOneConditionIsFalse() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        stubCompositeSnapshots(1450.0, 20.0, NOW.minusSeconds(60), NOW.minusSeconds(90));
+
+        service.evaluate(configuration);
+
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+        verify(repository).resolveActiveAlert("poor-air-and-hot", "living-room", null, NOW);
+    }
+
+    @Test
+    void compositeAnyActivatesWhenOneConditionIsTrue() throws Exception {
+        Validated configuration = configuration(compositeRule("ANY", "0s"));
+        ValidatedRule rule = configuration.alerts().getFirst();
+        stubCompositeSnapshots(1450.0, 20.0, NOW.minusSeconds(60), NOW.minusSeconds(90));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        verify(repository).createAlert(
+                eq(rule),
+                eq("living-room"),
+                isNull(),
+                anyString(),
+                eq("{\"co2\":\"1450\"}"),
+                eq(NOW),
+                anyString());
+    }
+
+    @Test
+    void compositeTreatsMissingConditionDataAsFalse() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        when(repository.latestEnvironment(SensorType.AIR)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "air-1",
+                        SensorType.AIR,
+                        null,
+                        null,
+                        1450.0,
+                        null,
+                        NOW.minusSeconds(60))));
+        when(repository.latestEnvironment(SensorType.ROOM)).thenReturn(List.of());
+
+        service.evaluate(configuration);
+
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+        verify(repository).resolveActiveAlert("poor-air-and-hot", "living-room", null, NOW);
+    }
+
+    @Test
+    void compositeTreatsStaleConditionDataAsFalse() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        stubCompositeSnapshots(1450.0, 29.5, NOW.minusSeconds(60), NOW.minusSeconds(10 * 60));
+
+        service.evaluate(configuration);
+
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+        verify(repository).resolveActiveAlert("poor-air-and-hot", "living-room", null, NOW);
+    }
+
+    @Test
+    void compositeUsesNewestDeviceObservationPerRoom() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        ValidatedRule rule = configuration.alerts().getFirst();
+        when(repository.latestEnvironment(SensorType.AIR)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "air-old",
+                        SensorType.AIR,
+                        null,
+                        null,
+                        900.0,
+                        null,
+                        NOW.minusSeconds(120)),
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "air-new",
+                        SensorType.AIR,
+                        null,
+                        null,
+                        1450.0,
+                        null,
+                        NOW.minusSeconds(30))));
+        when(repository.latestEnvironment(SensorType.ROOM)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "room-1",
+                        SensorType.ROOM,
+                        29.5,
+                        null,
+                        null,
+                        null,
+                        NOW.minusSeconds(45))));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        verify(repository).createAlert(
+                eq(rule),
+                eq("living-room"),
+                isNull(),
+                anyString(),
+                eq("{\"co2\":\"1450\",\"temperature\":\"29.5\"}"),
+                eq(NOW),
+                anyString());
+    }
+
+    @Test
+    void compositeRespectsParentForDuration() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "5m"));
+        stubCompositeSnapshots(1450.0, 29.5, NOW.minusSeconds(60), NOW.minusSeconds(90));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+        ArgumentCaptor<AlertState> state = ArgumentCaptor.forClass(AlertState.class);
+        verify(repository).saveState(state.capture());
+        assertThat(state.getValue().conditionActive()).isTrue();
+        assertThat(state.getValue().deviceId()).isNull();
+        // ALL uses latest observed_at among true conditions
+        assertThat(state.getValue().conditionStartedAt()).isEqualTo(NOW.minusSeconds(60));
+    }
+
+    @Test
+    void compositeResolvesWhenOneAllConditionClears() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "0s"));
+        stubCompositeSnapshots(1450.0, 20.0, NOW.minusSeconds(60), NOW.minusSeconds(90));
+
+        service.evaluate(configuration);
+
+        verify(repository).resolveActiveAlert("poor-air-and-hot", "living-room", null, NOW);
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    void compositeRendersValuesPlaceholderAndNullDeviceId() throws Exception {
+        Validated configuration = configuration("""
+                {
+                  "id": "poor-air-and-hot",
+                  "type": "COMPOSITE",
+                  "combinator": "ALL",
+                  "for": "0s",
+                  "severity": "WARNING",
+                  "rooms": ["living-room"],
+                  "message": "Poor conditions in {{roomId}} for {{duration}}: {{values}}",
+                  "conditions": [
+                    {
+                      "id": "co2",
+                      "type": "THRESHOLD",
+                      "source": "ENVIRONMENT",
+                      "sensorType": "AIR",
+                      "metric": "CO2",
+                      "operator": "GREATER_THAN",
+                      "threshold": 1200,
+                      "maxDataAge": "2m"
+                    },
+                    {
+                      "id": "temperature",
+                      "type": "THRESHOLD",
+                      "source": "ENVIRONMENT",
+                      "sensorType": "ROOM",
+                      "metric": "TEMPERATURE",
+                      "operator": "GREATER_THAN",
+                      "threshold": 28,
+                      "maxDataAge": "2m"
+                    }
+                  ]
+                }
+                """);
+        stubCompositeSnapshots(1450.0, 29.5, NOW.minusSeconds(60), NOW.minusSeconds(90));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.empty());
+
+        service.evaluate(configuration);
+
+        ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+        verify(repository).createAlert(
+                any(),
+                eq("living-room"),
+                isNull(),
+                message.capture(),
+                eq("{\"co2\":\"1450\",\"temperature\":\"29.5\"}"),
+                eq(NOW),
+                anyString());
+        assertThat(message.getValue()).isEqualTo(
+                "Poor conditions in living-room for PT0S: {\"co2\":\"1450\",\"temperature\":\"29.5\"}");
+    }
+
+    @Test
+    void compositeResetsPendingDurationWhenRuleConfigurationChanges() throws Exception {
+        Validated configuration = configuration(compositeRule("ALL", "5m"));
+        stubCompositeSnapshots(1450.0, 29.5, NOW.minusSeconds(60), NOW.minusSeconds(90));
+        when(repository.findState("poor-air-and-hot", "living-room", null)).thenReturn(Optional.of(
+                new AlertState(
+                        "poor-air-and-hot",
+                        "living-room",
+                        null,
+                        true,
+                        NOW.minusSeconds(10 * 60),
+                        "{\"co2\":\"1450\",\"temperature\":\"29.5\"}",
+                        "old-composite",
+                        NOW.minusSeconds(10))));
+
+        service.evaluate(configuration);
+
+        verify(repository, never()).createAlert(any(), anyString(), any(), anyString(), any(), any(), anyString());
+        ArgumentCaptor<AlertState> state = ArgumentCaptor.forClass(AlertState.class);
+        verify(repository).saveState(state.capture());
+        assertThat(state.getValue().conditionStartedAt()).isEqualTo(NOW.minusSeconds(60));
+    }
+
+    private void stubCompositeSnapshots(
+            double co2,
+            double temperature,
+            Instant airObservedAt,
+            Instant roomObservedAt) {
+        when(repository.latestEnvironment(SensorType.AIR)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "air-1",
+                        SensorType.AIR,
+                        null,
+                        null,
+                        co2,
+                        null,
+                        airObservedAt)));
+        when(repository.latestEnvironment(SensorType.ROOM)).thenReturn(List.of(
+                new EnvironmentSnapshot(
+                        "living-room",
+                        "room-1",
+                        SensorType.ROOM,
+                        temperature,
+                        null,
+                        null,
+                        null,
+                        roomObservedAt)));
+    }
+
+    private static String compositeRule(String combinator, String forDuration) {
+        return """
+                {
+                  "id": "poor-air-and-hot",
+                  "type": "COMPOSITE",
+                  "combinator": "%s",
+                  "for": "%s",
+                  "severity": "WARNING",
+                  "rooms": ["living-room"],
+                  "message": "Poor conditions in {{roomId}}: {{values}}",
+                  "conditions": [
+                    {
+                      "id": "co2",
+                      "type": "THRESHOLD",
+                      "source": "ENVIRONMENT",
+                      "sensorType": "AIR",
+                      "metric": "CO2",
+                      "operator": "GREATER_THAN",
+                      "threshold": 1200,
+                      "maxDataAge": "2m"
+                    },
+                    {
+                      "id": "temperature",
+                      "type": "THRESHOLD",
+                      "source": "ENVIRONMENT",
+                      "sensorType": "ROOM",
+                      "metric": "TEMPERATURE",
+                      "operator": "GREATER_THAN",
+                      "threshold": 28,
+                      "maxDataAge": "2m"
+                    }
+                  ]
+                }
+                """.formatted(combinator, forDuration);
     }
 
     private Validated configuration(String rule) throws Exception {

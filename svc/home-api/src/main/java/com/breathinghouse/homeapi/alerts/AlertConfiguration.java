@@ -74,6 +74,8 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
             Double threshold,
             BooleanField field,
             Boolean expected,
+            Combinator combinator,
+            List<AlertCondition> conditions,
             @JsonProperty("for") String forDuration,
             String maxDataAge,
             Severity severity,
@@ -83,25 +85,48 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
         ValidatedRule validate() {
             String normalizedId = requireText("alert id", id);
             RuleType requiredType = require("type", type);
-            Source requiredSource = require("source", source);
             Severity requiredSeverity = require("severity", severity);
             String requiredMessage = requireText("message", message);
             Duration holdDuration = parseDuration("for", forDuration);
             if (holdDuration.isNegative()) {
                 throw new IllegalArgumentException("for must not be negative for alert " + normalizedId);
             }
+
+            List<String> configuredRooms = rooms == null || rooms.isEmpty() ? List.of("*") : List.copyOf(rooms);
+            if (configuredRooms.stream().anyMatch(room -> room == null || room.isBlank())) {
+                throw new IllegalArgumentException("rooms must not contain blank values for alert " + normalizedId);
+            }
+
+            if (requiredType == RuleType.COMPOSITE) {
+                return validateComposite(
+                        normalizedId, requiredSeverity, requiredMessage, holdDuration, configuredRooms);
+            }
+
+            Source requiredSource = require("source", source);
             Duration dataAge = maxDataAge == null
                     ? null
                     : parseDuration("maxDataAge", maxDataAge);
             if (dataAge != null && (dataAge.isZero() || dataAge.isNegative())) {
                 throw new IllegalArgumentException("maxDataAge must be positive for alert " + normalizedId);
             }
-
-            validateShape(normalizedId, requiredType, requiredSource);
-            List<String> configuredRooms = rooms == null || rooms.isEmpty() ? List.of("*") : List.copyOf(rooms);
-            if (configuredRooms.stream().anyMatch(room -> room == null || room.isBlank())) {
-                throw new IllegalArgumentException("rooms must not contain blank values for alert " + normalizedId);
+            if (combinator != null) {
+                throw new IllegalArgumentException("combinator is only valid for COMPOSITE: " + normalizedId);
             }
+            if (conditions != null && !conditions.isEmpty()) {
+                throw new IllegalArgumentException("conditions are only valid for COMPOSITE: " + normalizedId);
+            }
+
+            validateLeafShape(
+                    normalizedId,
+                    requiredType,
+                    requiredSource,
+                    sensorType,
+                    eventType,
+                    metric,
+                    operator,
+                    threshold,
+                    field,
+                    expected);
 
             return new ValidatedRule(
                     normalizedId,
@@ -115,6 +140,8 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
                     threshold,
                     field,
                     expected,
+                    null,
+                    List.of(),
                     holdDuration,
                     dataAge,
                     requiredSeverity,
@@ -123,65 +150,205 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
                     this);
         }
 
-        private void validateShape(String ruleId, RuleType ruleType, Source ruleSource) {
-            switch (ruleType) {
-                case THRESHOLD -> {
-                    if (ruleSource != Source.ENVIRONMENT) {
-                        throw new IllegalArgumentException("THRESHOLD requires ENVIRONMENT source: " + ruleId);
-                    }
+        private ValidatedRule validateComposite(
+                String ruleId,
+                Severity requiredSeverity,
+                String requiredMessage,
+                Duration holdDuration,
+                List<String> configuredRooms) {
+            rejectParentLeafFields(ruleId);
+            Combinator requiredCombinator = require("combinator", combinator);
+            if (conditions == null || conditions.size() < 2) {
+                throw new IllegalArgumentException("COMPOSITE requires at least two conditions: " + ruleId);
+            }
+
+            Set<String> conditionIds = new HashSet<>();
+            List<ValidatedCondition> validatedConditions = conditions.stream()
+                    .map(condition -> condition.validate(ruleId))
+                    .peek(condition -> {
+                        if (!conditionIds.add(condition.id())) {
+                            throw new IllegalArgumentException(
+                                    "duplicate condition id '" + condition.id() + "' for alert " + ruleId);
+                        }
+                    })
+                    .toList();
+
+            return new ValidatedRule(
+                    ruleId,
+                    enabled == null || enabled,
+                    RuleType.COMPOSITE,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    requiredCombinator,
+                    validatedConditions,
+                    holdDuration,
+                    null,
+                    requiredSeverity,
+                    configuredRooms,
+                    requiredMessage,
+                    this);
+        }
+
+        private void rejectParentLeafFields(String ruleId) {
+            if (source != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set source: " + ruleId);
+            }
+            if (sensorType != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set sensorType: " + ruleId);
+            }
+            if (eventType != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set eventType: " + ruleId);
+            }
+            if (metric != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set metric: " + ruleId);
+            }
+            if (operator != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set operator: " + ruleId);
+            }
+            if (threshold != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set threshold: " + ruleId);
+            }
+            if (field != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set field: " + ruleId);
+            }
+            if (expected != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set expected: " + ruleId);
+            }
+            if (maxDataAge != null) {
+                throw new IllegalArgumentException("COMPOSITE must not set maxDataAge: " + ruleId);
+            }
+        }
+    }
+
+    public record AlertCondition(
+            String id,
+            RuleType type,
+            Source source,
+            SensorType sensorType,
+            EventType eventType,
+            Metric metric,
+            Operator operator,
+            Double threshold,
+            BooleanField field,
+            Boolean expected,
+            String maxDataAge) {
+
+        ValidatedCondition validate(String ruleId) {
+            String normalizedId = requireText("condition id", id);
+            RuleType requiredType = require("type", type);
+            if (requiredType == RuleType.COMPOSITE || requiredType == RuleType.STALE_DATA) {
+                throw new IllegalArgumentException(
+                        "COMPOSITE conditions cannot be " + requiredType + " for alert " + ruleId);
+            }
+            Source requiredSource = require("source", source);
+            Duration dataAge = parseDuration("maxDataAge", maxDataAge);
+            if (dataAge.isZero() || dataAge.isNegative()) {
+                throw new IllegalArgumentException(
+                        "maxDataAge must be positive for condition '" + normalizedId + "' in alert " + ruleId);
+            }
+
+            validateLeafShape(
+                    ruleId + "/" + normalizedId,
+                    requiredType,
+                    requiredSource,
+                    sensorType,
+                    eventType,
+                    metric,
+                    operator,
+                    threshold,
+                    field,
+                    expected);
+
+            return new ValidatedCondition(
+                    normalizedId,
+                    requiredType,
+                    requiredSource,
+                    sensorType,
+                    eventType,
+                    metric,
+                    operator,
+                    threshold,
+                    field,
+                    expected,
+                    dataAge);
+        }
+    }
+
+    private static void validateLeafShape(
+            String ruleId,
+            RuleType ruleType,
+            Source ruleSource,
+            SensorType sensorType,
+            EventType eventType,
+            Metric metric,
+            Operator operator,
+            Double threshold,
+            BooleanField field,
+            Boolean expected) {
+        switch (ruleType) {
+            case THRESHOLD -> {
+                if (ruleSource != Source.ENVIRONMENT) {
+                    throw new IllegalArgumentException("THRESHOLD requires ENVIRONMENT source: " + ruleId);
+                }
+                require("sensorType", sensorType);
+                require("metric", metric);
+                require("operator", operator);
+                require("threshold", threshold);
+                validateMetric(ruleId, sensorType, metric);
+            }
+            case BOOLEAN_STATE -> {
+                if (ruleSource != Source.OCCUPANCY) {
+                    throw new IllegalArgumentException("BOOLEAN_STATE requires OCCUPANCY source: " + ruleId);
+                }
+                require("eventType", eventType);
+                require("field", field);
+                require("expected", expected);
+                if ((eventType == EventType.PRESENCE && field != BooleanField.PRESENT)
+                        || (eventType == EventType.OPENING && field != BooleanField.OPEN)) {
+                    throw new IllegalArgumentException("field does not match eventType for alert " + ruleId);
+                }
+            }
+            case STALE_DATA -> {
+                if (ruleSource == Source.ENVIRONMENT) {
                     require("sensorType", sensorType);
-                    require("metric", metric);
-                    require("operator", operator);
-                    require("threshold", threshold);
-                    validateMetric(ruleId);
-                }
-                case BOOLEAN_STATE -> {
-                    if (ruleSource != Source.OCCUPANCY) {
-                        throw new IllegalArgumentException("BOOLEAN_STATE requires OCCUPANCY source: " + ruleId);
-                    }
+                } else {
                     require("eventType", eventType);
-                    require("field", field);
-                    require("expected", expected);
-                    if ((eventType == EventType.PRESENCE && field != BooleanField.PRESENT)
-                            || (eventType == EventType.OPENING && field != BooleanField.OPEN)) {
-                        throw new IllegalArgumentException("field does not match eventType for alert " + ruleId);
-                    }
-                }
-                case STALE_DATA -> {
-                    if (ruleSource == Source.ENVIRONMENT) {
-                        require("sensorType", sensorType);
-                    } else {
-                        require("eventType", eventType);
-                    }
                 }
             }
+            case COMPOSITE -> throw new IllegalArgumentException("unexpected COMPOSITE leaf: " + ruleId);
         }
+    }
 
-        private void validateMetric(String ruleId) {
-            if (sensorType == SensorType.AIR && (metric == Metric.LIGHT || metric == Metric.LIGHT_LEVEL)) {
-                throw new IllegalArgumentException("AIR does not provide " + metric + " for alert " + ruleId);
-            }
-            if (sensorType == SensorType.ROOM && (metric == Metric.HUMIDITY || metric == Metric.CO2)) {
-                throw new IllegalArgumentException("ROOM does not provide " + metric + " for alert " + ruleId);
-            }
-            if (metric == Metric.LIGHT_LEVEL) {
-                throw new IllegalArgumentException("LIGHT_LEVEL is not numeric and cannot use THRESHOLD: " + ruleId);
-            }
+    private static void validateMetric(String ruleId, SensorType sensorType, Metric metric) {
+        if (sensorType == SensorType.AIR && (metric == Metric.LIGHT || metric == Metric.LIGHT_LEVEL)) {
+            throw new IllegalArgumentException("AIR does not provide " + metric + " for alert " + ruleId);
         }
+        if (sensorType == SensorType.ROOM && (metric == Metric.HUMIDITY || metric == Metric.CO2)) {
+            throw new IllegalArgumentException("ROOM does not provide " + metric + " for alert " + ruleId);
+        }
+        if (metric == Metric.LIGHT_LEVEL) {
+            throw new IllegalArgumentException("LIGHT_LEVEL is not numeric and cannot use THRESHOLD: " + ruleId);
+        }
+    }
 
-        private static String requireText(String field, String value) {
-            if (value == null || value.isBlank()) {
-                throw new IllegalArgumentException(field + " is required");
-            }
-            return value.trim();
+    private static String requireText(String field, String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required");
         }
+        return value.trim();
+    }
 
-        private static <T> T require(String field, T value) {
-            if (value == null) {
-                throw new IllegalArgumentException(field + " is required");
-            }
-            return value;
+    private static <T> T require(String field, T value) {
+        if (value == null) {
+            throw new IllegalArgumentException(field + " is required");
         }
+        return value;
     }
 
     public record Validated(Duration evaluationInterval, List<ValidatedRule> alerts) {
@@ -199,6 +366,8 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
             Double threshold,
             BooleanField field,
             Boolean expected,
+            Combinator combinator,
+            List<ValidatedCondition> conditions,
             Duration holdDuration,
             Duration maxDataAge,
             Severity severity,
@@ -211,10 +380,30 @@ public record AlertConfiguration(String evaluationInterval, List<AlertRule> aler
         }
     }
 
+    public record ValidatedCondition(
+            String id,
+            RuleType type,
+            Source source,
+            SensorType sensorType,
+            EventType eventType,
+            Metric metric,
+            Operator operator,
+            Double threshold,
+            BooleanField field,
+            Boolean expected,
+            Duration maxDataAge) {
+    }
+
     public enum RuleType {
         THRESHOLD,
         BOOLEAN_STATE,
-        STALE_DATA
+        STALE_DATA,
+        COMPOSITE
+    }
+
+    public enum Combinator {
+        ALL,
+        ANY
     }
 
     public enum Source {
