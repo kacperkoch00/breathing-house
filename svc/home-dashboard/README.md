@@ -1,15 +1,27 @@
 # Home Dashboard
 
-Minimal React and Vite dashboard start page for Breathing House. The UI uses
-static/mock room readings and is not wired to live backends yet. The intended
-backend is `home-api` (history and alert APIs are not implemented yet).
+Minimal React and Vite overview for Breathing House. The start page loads live
+data from `home-api`: gateway status, rooms, latest environment readings, and
+active alerts.
 
 ```bash
 npm install
 npm run dev
 ```
 
-The development server is available at `http://localhost:5173`.
+The development server is available at `http://localhost:5173`. Point it at a
+running `home-api` with:
+
+```bash
+# optional; defaults to http://localhost:8082
+cp .env.example .env
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VITE_HOME_API_BASE_URL` | `http://localhost:8082` | Base URL for `home-api` (no trailing slash) |
+
+`home-api` CORS allows `http://localhost:5173` and `http://home-dashboard.local`.
 
 Build the static site:
 
@@ -32,8 +44,9 @@ make image SERVICE=home-dashboard IMAGE=ghcr.io/<owner>/home-dashboard:0.1.0
 docker push ghcr.io/<owner>/home-dashboard:0.1.0
 ```
 
-The production container serves the dashboard on port `8080`. `openapi.yaml` is
-a placeholder until the dashboard is wired to `home-api`.
+The production container serves the dashboard on port `8080`. Bake
+`VITE_HOME_API_BASE_URL` at build time when the browser should call a different
+host (for example `http://home-api.local`).
 
 ## Kubernetes
 
