@@ -1,4 +1,5 @@
 export type SensorType = 'ROOM' | 'AIR'
+export type EventType = 'PRESENCE' | 'OPENING'
 export type AlertStatus = 'ACTIVE' | 'RESOLVED'
 export type AlertSeverity = 'INFO' | 'WARNING' | 'CRITICAL'
 
@@ -27,6 +28,18 @@ export interface EnvironmentReading {
   co2: number | null
   light: number | null
   lightLevel: string | null
+  observedAt: string
+  receivedAt: string
+  ingestedAt: string
+}
+
+export interface OccupancyEvent {
+  id: number
+  roomId: string
+  sensorId: string | null
+  eventType: EventType
+  present: boolean | null
+  open: boolean | null
   observedAt: string
   receivedAt: string
   ingestedAt: string

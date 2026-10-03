@@ -1,13 +1,29 @@
 import type {
-  EnvironmentReading,
-  GatewayStatusResponse,
-  PageResponse,
-  RoomsResponse,
   Alert,
+  AlertStatus,
+  EnvironmentReading,
+  EventType,
+  GatewayStatusResponse,
+  OccupancyEvent,
+  PageResponse,
+  RoomSummary,
+  RoomsResponse,
   SensorType,
 } from './types'
 
 const DEFAULT_BASE_URL = 'http://localhost:8082'
+
+export class HomeApiError extends Error {
+  readonly status: number
+  readonly path: string
+
+  constructor(status: number, path: string) {
+    super(`home-api ${path} failed (${status})`)
+    this.name = 'HomeApiError'
+    this.status = status
+    this.path = path
+  }
+}
 
 export function getHomeApiBaseUrl(): string {
   const configured = import.meta.env.VITE_HOME_API_BASE_URL?.trim()
@@ -17,7 +33,7 @@ export function getHomeApiBaseUrl(): string {
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${getHomeApiBaseUrl()}${path}`)
   if (!response.ok) {
-    throw new Error(`home-api ${path} failed (${response.status})`)
+    throw new HomeApiError(response.status, path)
   }
   return response.json() as Promise<T>
 }
@@ -30,11 +46,22 @@ export function listRooms(): Promise<RoomsResponse> {
   return fetchJson<RoomsResponse>('/api/v1/rooms')
 }
 
+export function getRoom(roomId: string): Promise<RoomSummary> {
+  return fetchJson<RoomSummary>(`/api/v1/rooms/${encodeURIComponent(roomId)}`)
+}
+
 export function listEnvironmentReadings(
   roomId: string,
-  options: { limit?: number; sensorType?: SensorType } = {},
+  options: {
+    from?: string
+    to?: string
+    limit?: number
+    sensorType?: SensorType
+  } = {},
 ): Promise<PageResponse<EnvironmentReading>> {
   const params = new URLSearchParams()
+  if (options.from != null) params.set('from', options.from)
+  if (options.to != null) params.set('to', options.to)
   if (options.limit != null) params.set('limit', String(options.limit))
   if (options.sensorType != null) params.set('sensorType', options.sensorType)
   const query = params.toString()
@@ -55,7 +82,41 @@ export async function getLatestEnvironmentReading(
   return room.items[0] ?? null
 }
 
+export function listOccupancyEvents(
+  roomId: string,
+  options: {
+    from?: string
+    to?: string
+    limit?: number
+    eventType?: EventType
+  } = {},
+): Promise<PageResponse<OccupancyEvent>> {
+  const params = new URLSearchParams()
+  if (options.from != null) params.set('from', options.from)
+  if (options.to != null) params.set('to', options.to)
+  if (options.limit != null) params.set('limit', String(options.limit))
+  if (options.eventType != null) params.set('eventType', options.eventType)
+  const query = params.toString()
+  return fetchJson<PageResponse<OccupancyEvent>>(
+    `/api/v1/rooms/${encodeURIComponent(roomId)}/occupancy-events${query ? `?${query}` : ''}`,
+  )
+}
+
+export function listAlerts(
+  options: {
+    status?: AlertStatus
+    roomId?: string
+    limit?: number
+  } = {},
+): Promise<PageResponse<Alert>> {
+  const params = new URLSearchParams()
+  if (options.status != null) params.set('status', options.status)
+  if (options.roomId != null) params.set('roomId', options.roomId)
+  if (options.limit != null) params.set('limit', String(options.limit))
+  const query = params.toString()
+  return fetchJson<PageResponse<Alert>>(`/api/v1/alerts${query ? `?${query}` : ''}`)
+}
+
 export function listActiveAlerts(limit = 20): Promise<PageResponse<Alert>> {
-  const params = new URLSearchParams({ status: 'ACTIVE', limit: String(limit) })
-  return fetchJson<PageResponse<Alert>>(`/api/v1/alerts?${params}`)
+  return listAlerts({ status: 'ACTIVE', limit })
 }
