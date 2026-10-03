@@ -1,6 +1,7 @@
 package com.breathinghouse.homeapi;
 
 import com.breathinghouse.homeapi.alerts.AlertRepository;
+import com.breathinghouse.homeapi.gateway.GatewayHeartbeatRepository;
 import com.breathinghouse.homeapi.history.HistoryRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -13,10 +14,15 @@ public class HealthController {
 
     private final HistoryRepository historyRepository;
     private final AlertRepository alertRepository;
+    private final GatewayHeartbeatRepository gatewayHeartbeatRepository;
 
-    public HealthController(HistoryRepository historyRepository, AlertRepository alertRepository) {
+    public HealthController(
+            HistoryRepository historyRepository,
+            AlertRepository alertRepository,
+            GatewayHeartbeatRepository gatewayHeartbeatRepository) {
         this.historyRepository = historyRepository;
         this.alertRepository = alertRepository;
+        this.gatewayHeartbeatRepository = gatewayHeartbeatRepository;
     }
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_PLAIN_VALUE)
@@ -26,7 +32,9 @@ public class HealthController {
 
     @GetMapping(value = "/ready", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<String> ready() {
-        if (historyRepository.isReady() && alertRepository.isReady()) {
+        if (historyRepository.isReady()
+                && alertRepository.isReady()
+                && gatewayHeartbeatRepository.isReady()) {
             return ResponseEntity.ok("READY\n");
         }
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("NOT_READY\n");

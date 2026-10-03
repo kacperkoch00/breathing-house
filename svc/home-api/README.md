@@ -2,30 +2,37 @@
 
 Frontend-facing Breathing House API (BFF) for `home-dashboard`. It is the
 read/query boundary over historical environment and occupancy data. It also
-evaluates configurable alert rules and persists alert lifecycle state.
+evaluates configurable alert rules, persists alert lifecycle state, and exposes
+sensor gateway online/offline status from Kafka STATUS heartbeats.
 
 ## Architectural responsibility
 
 `home-api` is the single backend API consumed by `home-dashboard`. The monitors
-retain write-side persistence:
+retain write-side persistence for environment and occupancy history:
 
 - `environment-monitor`: consume Kafka and persist environment readings
 - `occupancy-monitor`: consume Kafka and persist occupancy events
+
+`home-api` additionally consumes Kafka topic `status-data` (STATUS heartbeats
+produced by `sensors-data-collector`) and stores the complete heartbeat history
+in `home_api.gateway_heartbeat`.
 
 ## Run locally
 
 Requires PostgreSQL with the shared init schema
 (`deploy/k8s/postgres-init.sql`), for example via `make k8s-postgres` or a local
-Postgres instance.
+Postgres instance. Kafka is required for STATUS heartbeat consumption (defaults
+to `localhost:9092`, topic `status-data`).
 
 ```bash
 mvn -B test
 mvn spring-boot:run
 curl http://localhost:8082/live
 curl http://localhost:8082/ready
+curl http://localhost:8082/api/v1/sensor-gateway/status
 ```
 
-Default JDBC settings:
+Default settings:
 
 | Variable | Default |
 |---|---|
@@ -37,12 +44,61 @@ Default JDBC settings:
 | `CORS_ALLOWED_ORIGINS` | `http://home-dashboard.local,http://localhost:5173` |
 | `ALERT_CONFIG_PATH` | packaged `alerts/default-alerts.json` |
 | `ALERT_SCHEDULING_ENABLED` | `true` |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `KAFKA_STATUS_TOPIC` | `status-data` |
+| `KAFKA_STATUS_CONSUMER_GROUP_ID` | `home-api-gateway-status` |
+| `SENSOR_GATEWAY_ID` | `gateway` |
+| `SENSOR_GATEWAY_HEARTBEAT_TIMEOUT` | `30s` |
+| `KAFKA_RETRY_DELAY` | `5s` |
 
 Local/dev defaults use the shared `bh` user. Production should inject a user
-that can read the monitor schemas and write only the `home_api` alert schema
-through a Kubernetes Secret.
+that can read the monitor schemas and write the `home_api` alert and gateway
+heartbeat schemas through a Kubernetes Secret.
 
 The service listens on port `8082` by default.
+
+## Sensor gateway status
+
+`sensors-data-collector` publishes STATUS envelopes to Kafka topic `status-data`:
+
+```json
+{
+  "schemaVersion": 1,
+  "roomId": "gateway",
+  "deviceId": null,
+  "type": "STATUS",
+  "observedAt": "2026-10-03T10:00:00Z",
+  "receivedAt": "2026-10-03T10:00:00Z",
+  "values": {
+    "status": "ONLINE",
+    "uptime": 3600,
+    "connected": true
+  }
+}
+```
+
+`values.status` must be a nonblank string (`ONLINE`, `OK`, `READY`, or any other
+tool-specific value). Home API treats a fresh valid STATUS message as the
+heartbeat; the reported status string is diagnostic only and does not control
+online/offline.
+
+Timeout semantics:
+
+- gateway is online when the newest row for `SENSOR_GATEWAY_ID` has
+  `received_at >= now - SENSOR_GATEWAY_HEARTBEAT_TIMEOUT`
+- freshness uses `receivedAt` from the collector, not gateway `observedAt` and
+  not DB `ingested_at`
+- missing or expired heartbeats return `{"online":false}` with HTTP 200
+
+```bash
+curl http://localhost:8082/api/v1/sensor-gateway/status
+# {"online":true}
+```
+
+Every valid heartbeat is retained. Duplicate Kafka topic/partition/offset
+deliveries are idempotent. Invalid STATUS contracts are logged and skipped;
+database failures retry the same record after `KAFKA_RETRY_DELAY` without
+advancing the offset.
 
 ## History API
 
@@ -191,9 +247,12 @@ not implemented yet.
 ## Readiness
 
 - `/live` is always `200` while the process is running
-- `/ready` is `200` only when `environment.environment_reading` and
-  `occupancy.occupancy_event`, `home_api.alert`, and `home_api.alert_state` are
-  queryable; otherwise `503`
+- `/ready` is `200` only when `environment.environment_reading`,
+  `occupancy.occupancy_event`, `home_api.alert`, `home_api.alert_state`, and
+  `home_api.gateway_heartbeat` are queryable; otherwise `503`
+- `/ready` does **not** require a recent heartbeat or an online gateway. Gateway
+  downtime is exposed only by `GET /api/v1/sensor-gateway/status`, not by
+  `/live` or `/ready`.
 
 ## Metrics
 
