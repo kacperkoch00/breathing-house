@@ -1,13 +1,17 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getAlert, HomeApiError } from './api/homeApi'
 import type { AlertDetail } from './api/types'
+import { humanizeAlertMessage } from './overview'
 import { formatEventTime } from './roomDetail'
+import { severityBadgeClass, severityLabel } from './ui'
 
 type DrawerLoadState = 'idle' | 'loading' | 'ready' | 'error' | 'not-found'
 
 interface AlertDrawerProps {
   alertId: number | null
+  roomNames?: Record<string, string>
+  sensorNames?: Record<string, string>
   onClose: () => void
 }
 
@@ -19,13 +23,24 @@ function formatRuleSnapshot(snapshot: unknown): string {
   }
 }
 
-export function AlertDrawer({ alertId, onClose }: AlertDrawerProps) {
+export function AlertDrawer({ alertId, roomNames, sensorNames, onClose }: AlertDrawerProps) {
   const titleId = useId()
+  const dialogRef = useRef<HTMLDialogElement>(null)
   const [detail, setDetail] = useState<AlertDetail | null>(null)
   const [loadState, setLoadState] = useState<DrawerLoadState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const open = alertId != null
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (open && !dialog.open) {
+      dialog.showModal()
+    } else if (!open && dialog.open) {
+      dialog.close()
+    }
+  }, [open])
 
   useEffect(() => {
     if (alertId == null) {
@@ -62,97 +77,111 @@ export function AlertDrawer({ alertId, onClose }: AlertDrawerProps) {
     }
   }, [alertId])
 
-  useEffect(() => {
-    if (!open) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
-
-  if (!open) {
-    return null
-  }
-
   return (
-    <div className="drawer-root" role="presentation">
-      <button
-        type="button"
-        className="drawer-scrim"
-        aria-label="Close alert detail"
-        onClick={onClose}
-      />
-      <aside
-        className="drawer-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
-        <header className="drawer-header">
+    <dialog
+      ref={dialogRef}
+      className="modal modal-end"
+      aria-labelledby={titleId}
+      onClose={onClose}
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+    >
+      <div className="modal-box bg-base-100 border-base-300 flex h-full max-h-full w-full max-w-md flex-col rounded-none border-l p-0">
+        <header className="border-base-300 flex items-start justify-between gap-4 border-b p-5">
           <div>
-            <p className="eyebrow">Alert detail</p>
-            <h2 id={titleId}>
-              {loadState === 'ready' && detail ? detail.severity : 'Alert'}
+            <p className="text-base-content/45 font-mono text-[11px] tracking-[0.16em] uppercase">
+              Alert detail
+            </p>
+            <h2 id={titleId} className="mt-1 text-xl font-semibold">
+                  {loadState === 'ready' && detail ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className={severityBadgeClass(detail.severity)}>
+                    {severityLabel(detail.severity)}
+                  </span>
+                  Alert
+                </span>
+              ) : (
+                'Alert'
+              )}
             </h2>
           </div>
-          <button type="button" className="drawer-close" onClick={onClose}>
+          <button type="button" className="btn btn-ghost btn-sm font-mono" onClick={onClose}>
             Close
           </button>
         </header>
 
-        <div className="drawer-body">
-          {loadState === 'loading' && <p className="banner">Loading alert…</p>}
+        <div className="flex-1 overflow-auto p-5">
+          {loadState === 'loading' && (
+            <div className="flex items-center gap-3 py-6">
+              <span className="loading loading-spinner loading-md text-primary" />
+              <span className="font-mono text-sm">Loading alert…</span>
+            </div>
+          )}
 
           {(loadState === 'error' || loadState === 'not-found') && (
-            <p className="banner error" role="alert">
-              {errorMessage}
-            </p>
+            <div role="alert" className="alert alert-error alert-soft">
+              <span className="font-mono text-sm">{errorMessage}</span>
+            </div>
           )}
 
           {loadState === 'ready' && detail && (
             <>
-              <dl className="drawer-fields">
-                <div>
-                  <dt>Severity</dt>
-                  <dd>{detail.severity}</dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{detail.status}</dd>
-                </div>
-                <div>
-                  <dt>Message</dt>
-                  <dd>{detail.message}</dd>
-                </div>
-                <div>
-                  <dt>Room</dt>
+              <dl className="divide-base-300 divide-y text-sm">
+                {[
+                  ['Severity', severityLabel(detail.severity)],
+                  ['Status', detail.status === 'ACTIVE' ? 'Active' : 'Resolved'],
+                  [
+                    'What happened',
+                    humanizeAlertMessage(detail, {
+                      rooms: roomNames,
+                      sensors: sensorNames,
+                    }),
+                  ],
+                  [
+                    'Sensor',
+                    detail.sensorId
+                      ? (sensorNames?.[detail.sensorId] ?? detail.sensorId)
+                      : '—',
+                  ],
+                  ['Trigger value', detail.triggerValue ?? '—'],
+                  ['Rule', detail.ruleId],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-3">
+                    <dt className="text-base-content/45 text-[11px] tracking-wide uppercase">
+                      {label}
+                    </dt>
+                    <dd className="break-words text-sm">{value}</dd>
+                  </div>
+                ))}
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-base-content/45 font-mono text-[11px] tracking-wide uppercase">
+                    Room
+                  </dt>
                   <dd>
-                    <Link className="drawer-room-link" to={`/rooms/${detail.roomId}`} onClick={onClose}>
-                      {detail.roomId}
+                    <Link
+                      className="link link-primary text-xs sm:text-sm"
+                      to={`/rooms/${detail.roomId}`}
+                      onClick={onClose}
+                    >
+                      {roomNames?.[detail.roomId] ?? detail.roomId}
                     </Link>
                   </dd>
                 </div>
-                <div>
-                  <dt>Sensor</dt>
-                  <dd>{detail.sensorId ?? '—'}</dd>
-                </div>
-                <div>
-                  <dt>Trigger value</dt>
-                  <dd>{detail.triggerValue ?? '—'}</dd>
-                </div>
-                <div>
-                  <dt>Triggered</dt>
-                  <dd>
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-base-content/45 font-mono text-[11px] tracking-wide uppercase">
+                    Triggered
+                  </dt>
+                  <dd className="font-mono text-xs sm:text-sm">
                     <time dateTime={detail.triggeredAt}>{formatEventTime(detail.triggeredAt)}</time>
                   </dd>
                 </div>
-                <div>
-                  <dt>Resolved</dt>
-                  <dd>
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-base-content/45 font-mono text-[11px] tracking-wide uppercase">
+                    Resolved
+                  </dt>
+                  <dd className="font-mono text-xs sm:text-sm">
                     {detail.resolvedAt ? (
                       <time dateTime={detail.resolvedAt}>{formatEventTime(detail.resolvedAt)}</time>
                     ) : (
@@ -160,28 +189,35 @@ export function AlertDrawer({ alertId, onClose }: AlertDrawerProps) {
                     )}
                   </dd>
                 </div>
-                <div>
-                  <dt>Last evaluated</dt>
-                  <dd>
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-3">
+                  <dt className="text-base-content/45 font-mono text-[11px] tracking-wide uppercase">
+                    Last evaluated
+                  </dt>
+                  <dd className="font-mono text-xs sm:text-sm">
                     <time dateTime={detail.lastEvaluatedAt}>
                       {formatEventTime(detail.lastEvaluatedAt)}
                     </time>
                   </dd>
                 </div>
-                <div>
-                  <dt>Rule</dt>
-                  <dd>{detail.ruleId}</dd>
-                </div>
               </dl>
 
-              <div className="drawer-snapshot">
-                <p className="eyebrow">Rule snapshot</p>
-                <pre>{formatRuleSnapshot(detail.ruleSnapshot)}</pre>
+              <div className="mt-5">
+                <p className="text-base-content/45 mb-2 font-mono text-[11px] tracking-[0.16em] uppercase">
+                  Rule snapshot
+                </p>
+                <pre className="bg-base-200 border-base-300 overflow-auto border p-3 font-mono text-[11px] break-words whitespace-pre-wrap">
+                  {formatRuleSnapshot(detail.ruleSnapshot)}
+                </pre>
               </div>
             </>
           )}
         </div>
-      </aside>
-    </div>
+      </div>
+      <form method="dialog" className="modal-backdrop">
+        <button type="submit" aria-label="Close alert detail">
+          close
+        </button>
+      </form>
+    </dialog>
   )
 }

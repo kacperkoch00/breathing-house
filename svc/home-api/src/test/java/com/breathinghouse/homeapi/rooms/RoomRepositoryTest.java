@@ -119,6 +119,19 @@ class RoomRepositoryTest {
     }
 
     @Test
+    void deleteRemovesRoomAndNullsSensorRoomId() {
+        repository.insert("living", "Living Room", null, NOW);
+        insertSensor("air-1", "living");
+
+        assertThat(repository.delete("living")).isEqualTo(1);
+        assertThat(repository.findById("living")).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "SELECT room_id FROM home_api.sensor WHERE sensor_id = 'air-1'", String.class))
+                .isNull();
+        assertThat(repository.delete("living")).isZero();
+    }
+
+    @Test
     void readinessChecksRoomAndSensorTables() {
         assertThat(repository.isReady()).isTrue();
     }

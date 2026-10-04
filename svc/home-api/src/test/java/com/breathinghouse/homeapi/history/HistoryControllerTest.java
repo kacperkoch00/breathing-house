@@ -40,7 +40,7 @@ class HistoryControllerTest {
     @Test
     void environmentHistoryReturnsMappedFieldsAndNulls() throws Exception {
         when(historyRepository.findEnvironmentReadings(
-                eq("living-room"), isNull(), isNull(), isNull(), eq(100), eq(0)))
+                eq("living-room"), isNull(), isNull(), isNull(), isNull(), eq(100), eq(0)))
                 .thenReturn(new PageResponse<>(List.of(new EnvironmentReading(
                         123L,
                         "living-room",
@@ -100,7 +100,7 @@ class HistoryControllerTest {
     @Test
     void customLimitAndOffsetAreForwarded() throws Exception {
         when(historyRepository.findEnvironmentReadings(
-                eq("living-room"), isNull(), isNull(), isNull(), eq(2), eq(5)))
+                eq("living-room"), isNull(), isNull(), isNull(), isNull(), eq(2), eq(5)))
                 .thenReturn(new PageResponse<>(List.of(), 2, 5, false));
 
         mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings")
@@ -111,7 +111,7 @@ class HistoryControllerTest {
                 .andExpect(jsonPath("$.offset").value(5));
 
         verify(historyRepository).findEnvironmentReadings(
-                eq("living-room"), isNull(), isNull(), isNull(), eq(2), eq(5));
+                eq("living-room"), isNull(), isNull(), isNull(), isNull(), eq(2), eq(5));
     }
 
     @Test
@@ -119,7 +119,7 @@ class HistoryControllerTest {
         Instant from = Instant.parse("2026-10-03T00:00:00Z");
         Instant to = Instant.parse("2026-10-03T23:59:59Z");
         when(historyRepository.findEnvironmentReadings(
-                eq("living-room"), eq(SensorType.AIR), eq(from), eq(to), eq(100), eq(0)))
+                eq("living-room"), eq(SensorType.AIR), eq("air-10"), eq(from), eq(to), eq(100), eq(0)))
                 .thenReturn(new PageResponse<>(List.of(), 100, 0, false));
         when(historyRepository.findOccupancyEvents(
                 eq("living-room"), eq(EventType.OPENING), eq(from), eq(to), eq(100), eq(0)))
@@ -127,6 +127,7 @@ class HistoryControllerTest {
 
         mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings")
                         .param("sensorType", "AIR")
+                        .param("sensorId", "air-10")
                         .param("from", "2026-10-03T00:00:00Z")
                         .param("to", "2026-10-03T23:59:59Z"))
                 .andExpect(status().isOk());
@@ -183,7 +184,7 @@ class HistoryControllerTest {
     @Test
     void emptyHistoryReturns200() throws Exception {
         when(historyRepository.findEnvironmentReadings(
-                any(), any(), any(), any(), anyInt(), anyInt()))
+                any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new PageResponse<>(List.of(), 100, 0, false));
 
         mockMvc.perform(get("/api/v1/rooms/unknown/environment-readings"))
@@ -195,7 +196,7 @@ class HistoryControllerTest {
     @Test
     void repositoryFailureReturns500() throws Exception {
         when(historyRepository.findEnvironmentReadings(
-                any(), any(), any(), any(), anyInt(), anyInt()))
+                any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenThrow(new DataAccessResourceFailureException("down"));
 
         mockMvc.perform(get("/api/v1/rooms/living-room/environment-readings"))
@@ -207,7 +208,7 @@ class HistoryControllerTest {
     @Test
     void corsAllowsConfiguredOrigin() throws Exception {
         when(historyRepository.findEnvironmentReadings(
-                any(), any(), any(), any(), anyInt(), anyInt()))
+                any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new PageResponse<>(List.of(), 100, 0, false));
 
         mockMvc.perform(options("/api/v1/rooms/living-room/environment-readings")

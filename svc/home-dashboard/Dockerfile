@@ -20,5 +20,5 @@ COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080
 
 USER 101:101
-ENV HOME_API_UPSTREAM=http://home-api:8082
+ENV HOME_API_UPSTREAM=http://home-api.default.svc.cluster.local:8082
 ENTRYPOINT ["/docker-entrypoint.sh"]

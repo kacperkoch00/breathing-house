@@ -1,4 +1,5 @@
 import type { Alert, AlertSeverity, EnvironmentReading, RoomSummary } from './api/types'
+import { comfortForRoom, type ComfortBand, type MetricTile } from './comfort'
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = {
   INFO: 1,
@@ -37,6 +38,30 @@ export function pickHighestSeverityAlert(alerts: Alert[]): Alert | null {
   )
 }
 
+/** Swap raw room/sensor ids in alert text for human-readable names. */
+export function humanizeAlertMessage(
+  alert: Pick<Alert, 'message' | 'roomId' | 'sensorId'>,
+  labels: {
+    rooms?: Record<string, string>
+    sensors?: Record<string, string>
+  } = {},
+): string {
+  let message = alert.message
+  const roomName = alert.roomId ? labels.rooms?.[alert.roomId] : undefined
+  if (alert.roomId && roomName) {
+    message = message.split(alert.roomId).join(roomName)
+  }
+  const sensorName = alert.sensorId ? labels.sensors?.[alert.sensorId] : undefined
+  if (alert.sensorId && sensorName) {
+    message = message.split(alert.sensorId).join(sensorName)
+  }
+  return message
+}
+
+export function roomNameMap(rooms: RoomSummary[]): Record<string, string> {
+  return Object.fromEntries(rooms.map((room) => [room.roomId, room.name]))
+}
+
 export function alertsForRoom(alerts: Alert[], roomId: string): Alert[] {
   return alerts.filter((alert) => alert.roomId === roomId)
 }
@@ -44,7 +69,7 @@ export function alertsForRoom(alerts: Alert[], roomId: string): Alert[] {
 export function roomTopline(alerts: Alert[]): string {
   const highest = pickHighestSeverityAlert(alerts)
   if (!highest) {
-    return 'Stable'
+    return 'Good'
   }
   return highest.severity
 }
@@ -85,9 +110,17 @@ export function newestObservedAt(readings: Array<EnvironmentReading | null>): st
   return newest
 }
 
-export function formatUpdatedLabel(observedAt: string | null, fetchedAt: Date): string {
+export function formatUpdatedLabel(
+  observedAt: string | null,
+  fetchedAt: Date,
+  now: Date = new Date(),
+): string {
   const source = observedAt ? new Date(observedAt) : fetchedAt
   if (Number.isNaN(source.getTime())) {
+    return 'Updated just now'
+  }
+  const ageMs = now.getTime() - source.getTime()
+  if (ageMs >= 0 && ageMs < 15_000) {
     return 'Updated just now'
   }
   return `Updated ${source.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
@@ -105,6 +138,10 @@ export interface RoomCardModel {
   topline: string
   tone: 'cool' | 'quiet' | 'warm'
   alerted: boolean
+  comfortLabel: string
+  comfortBand: ComfortBand
+  metrics: MetricTile[]
+  advice: string | null
 }
 
 export function mapRoomCard(
@@ -113,13 +150,18 @@ export function mapRoomCard(
   alerts: Alert[],
 ): RoomCardModel {
   const roomAlerts = alertsForRoom(alerts, room.roomId)
+  const comfort = comfortForRoom(room.roomId, reading, alerts)
   return {
     roomId: room.roomId,
     name: room.name,
     value: formatTemp(reading?.temperature),
     detail: formatReadingDetail(reading),
-    topline: roomTopline(roomAlerts),
+    topline: comfort.label,
     tone: cardTone(reading, roomAlerts),
     alerted: roomAlerts.length > 0,
+    comfortLabel: comfort.label,
+    comfortBand: comfort.band,
+    metrics: comfort.metrics,
+    advice: comfort.advice,
   }
 }

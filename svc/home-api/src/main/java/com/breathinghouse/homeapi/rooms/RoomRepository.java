@@ -125,6 +125,13 @@ public class RoomRepository {
                         .addValue("now", Timestamp.from(now)));
     }
 
+    /** Hard-delete. Sensors.room_id is SET NULL by FK. Returns rows deleted (0 or 1). */
+    public int delete(String roomId) {
+        return jdbc.update(
+                "DELETE FROM home_api.room WHERE room_id = :roomId",
+                new MapSqlParameterSource("roomId", roomId));
+    }
+
     private List<String> sensorIdsOf(String roomId) {
         return jdbc.queryForList(
                 """

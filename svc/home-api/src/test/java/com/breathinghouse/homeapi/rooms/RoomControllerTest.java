@@ -252,9 +252,21 @@ class RoomControllerTest {
     }
 
     @Test
-    void roomsCannotBeDeleted() throws Exception {
+    void deleteReturns204() throws Exception {
         mockMvc.perform(delete("/api/v1/rooms/room-b"))
-                .andExpect(status().isMethodNotAllowed());
+                .andExpect(status().isNoContent());
+        verify(roomService).deleteRoom("room-b");
+    }
+
+    @Test
+    void deleteMissingRoomReturns404() throws Exception {
+        org.mockito.Mockito.doThrow(new RoomNotFoundException("ghost"))
+                .when(roomService).deleteRoom("ghost");
+
+        mockMvc.perform(delete("/api/v1/rooms/ghost"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"))
+                .andExpect(jsonPath("$.message").value("Room 'ghost' was not found"));
     }
 
     @Test

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   assignSensor,
   createRoom,
+  deleteRoom,
   listRooms,
   listSensors,
   unassignSensor,
@@ -10,13 +11,16 @@ import {
   updateSensorDisplayName,
 } from './api/homeApi'
 import type { RoomSummary, SensorSummary } from './api/types'
+import { AppShell } from './AppShell'
 import { formatLocalClock } from './overview'
+import { useAutoRefresh } from './useAutoRefresh'
 
 const NAME_MAX = 100
 const DESCRIPTION_MAX = 500
 const DISPLAY_NAME_MAX = 100
 
 type LoadState = 'loading' | 'ready' | 'error'
+type SetupTab = 'rooms' | 'unassigned' | 'devices'
 
 interface SetupState {
   rooms: RoomSummary[]
@@ -51,9 +55,15 @@ function roomNameById(rooms: RoomSummary[], roomId: string | null): string {
   return rooms.find((room) => room.roomId === roomId)?.name ?? roomId
 }
 
+function sensorTypeBadge(types: string[]): string {
+  if (types.length === 0) return 'Unknown'
+  return types.join(' · ')
+}
+
 export function SetupPage() {
   const [state, setState] = useState<SetupState>(initialState)
-  const [clock, setClock] = useState(() => new Date())
+  const [tab, setTab] = useState<SetupTab>('rooms')
+  const [showCreateRoom, setShowCreateRoom] = useState(false)
 
   const [createName, setCreateName] = useState('')
   const [createDescription, setCreateDescription] = useState('')
@@ -65,6 +75,8 @@ export function SetupPage() {
   const [editDescription, setEditDescription] = useState('')
   const [editRoomError, setEditRoomError] = useState<string | null>(null)
   const [savingRoomId, setSavingRoomId] = useState<string | null>(null)
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null)
+  const [deleteRoomError, setDeleteRoomError] = useState<string | null>(null)
 
   const [editingSensorId, setEditingSensorId] = useState<string | null>(null)
   const [editDisplayName, setEditDisplayName] = useState('')
@@ -75,12 +87,14 @@ export function SetupPage() {
   const [assignErrorBySensor, setAssignErrorBySensor] = useState<Record<string, string>>({})
   const [busySensorId, setBusySensorId] = useState<string | null>(null)
 
-  const loadSetup = useCallback(async () => {
-    setState((prev) => ({ ...prev, loadState: 'loading', errorMessage: null }))
-    setCreateError(null)
-    setEditRoomError(null)
-    setEditSensorError(null)
-    setAssignErrorBySensor({})
+  const loadSetup = useCallback(async (isRefresh: boolean) => {
+    if (!isRefresh) {
+      setState((prev) => ({ ...prev, loadState: 'loading', errorMessage: null }))
+      setCreateError(null)
+      setEditRoomError(null)
+      setEditSensorError(null)
+      setAssignErrorBySensor({})
+    }
 
     try {
       const [roomsResponse, sensorsResponse] = await Promise.all([listRooms(), listSensors()])
@@ -90,6 +104,7 @@ export function SetupPage() {
         loadState: 'ready',
         errorMessage: null,
       })
+      setShowCreateRoom(roomsResponse.rooms.length === 0)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load setup data'
       setState((prev) => ({
@@ -100,23 +115,23 @@ export function SetupPage() {
     }
   }, [])
 
-  useEffect(() => {
-    void loadSetup()
-  }, [loadSetup])
+  const { refreshing, refresh, clock } = useAutoRefresh(loadSetup)
 
-  useEffect(() => {
-    const clockId = window.setInterval(() => setClock(new Date()), 30_000)
-    return () => window.clearInterval(clockId)
-  }, [])
-
-  const { unassignedSensors, assignedSensors } = useMemo(() => {
+  const { unassignedSensors, assignedSensors, sensorsByRoom } = useMemo(() => {
     const unassigned: SensorSummary[] = []
     const assigned: SensorSummary[] = []
+    const byRoom: Record<string, SensorSummary[]> = {}
     for (const sensor of state.sensors) {
-      if (sensor.roomId == null) unassigned.push(sensor)
-      else assigned.push(sensor)
+      if (sensor.roomId == null) {
+        unassigned.push(sensor)
+      } else {
+        assigned.push(sensor)
+        const list = byRoom[sensor.roomId] ?? []
+        list.push(sensor)
+        byRoom[sensor.roomId] = list
+      }
     }
-    return { unassignedSensors: unassigned, assignedSensors: assigned }
+    return { unassignedSensors: unassigned, assignedSensors: assigned, sensorsByRoom: byRoom }
   }, [state.sensors])
 
   const beginEditRoom = (room: RoomSummary) => {
@@ -152,7 +167,9 @@ export function SetupPage() {
       })
       setCreateName('')
       setCreateDescription('')
-      await loadSetup()
+      setShowCreateRoom(false)
+      setTab('rooms')
+      await loadSetup(true)
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : 'Failed to create room')
     } finally {
@@ -179,11 +196,33 @@ export function SetupPage() {
         description: description.length > 0 ? description : null,
       })
       setEditingRoomId(null)
-      await loadSetup()
+      await loadSetup(true)
     } catch (error) {
       setEditRoomError(error instanceof Error ? error.message : 'Failed to update room')
     } finally {
       setSavingRoomId(null)
+    }
+  }
+
+  const handleDeleteRoom = async (room: RoomSummary) => {
+    const sensorCount = (sensorsByRoom[room.roomId] ?? []).length
+    const detail =
+      sensorCount > 0
+        ? `${sensorCount} sensor${sensorCount === 1 ? '' : 's'} will become unassigned. History is kept.`
+        : 'History for this room id is kept.'
+    const confirmed = window.confirm(`Remove “${room.name}”?\n\n${detail}`)
+    if (!confirmed) return
+
+    setDeletingRoomId(room.roomId)
+    setDeleteRoomError(null)
+    try {
+      await deleteRoom(room.roomId)
+      if (editingRoomId === room.roomId) setEditingRoomId(null)
+      await loadSetup(true)
+    } catch (error) {
+      setDeleteRoomError(error instanceof Error ? error.message : 'Failed to remove room')
+    } finally {
+      setDeletingRoomId(null)
     }
   }
 
@@ -200,7 +239,7 @@ export function SetupPage() {
     try {
       await updateSensorDisplayName(sensorId, editDisplayName.trim())
       setEditingSensorId(null)
-      await loadSetup()
+      await loadSetup(true)
     } catch (error) {
       setEditSensorError(error instanceof Error ? error.message : 'Failed to rename sensor')
     } finally {
@@ -223,7 +262,7 @@ export function SetupPage() {
     })
     try {
       await assignSensor(roomId, sensorId)
-      await loadSetup()
+      await loadSetup(true)
     } catch (error) {
       setAssignErrorBySensor((prev) => ({
         ...prev,
@@ -245,7 +284,7 @@ export function SetupPage() {
     })
     try {
       await unassignSensor(sensor.roomId, sensor.sensorId)
-      await loadSetup()
+      await loadSetup(true)
     } catch (error) {
       setAssignErrorBySensor((prev) => ({
         ...prev,
@@ -256,278 +295,426 @@ export function SetupPage() {
     }
   }
 
-  const renderSensorRow = (sensor: SensorSummary) => {
+  const renderAssignControls = (sensor: SensorSummary, compact = false) => {
     const assignError = assignErrorBySensor[sensor.sensorId]
     const isBusy = busySensorId === sensor.sensorId
-    const isRenaming = editingSensorId === sensor.sensorId
-    const typesLabel = sensor.types.length > 0 ? sensor.types.join(', ') : 'No types yet'
 
     return (
-      <li key={sensor.sensorId} className={sensor.roomId == null ? 'setup-sensor is-unassigned' : 'setup-sensor'}>
-        <div className="setup-sensor-main">
-          {isRenaming ? (
-            <form
-              className="setup-inline-form"
-              onSubmit={(event) => void handleSaveSensorName(event, sensor.sensorId)}
-            >
-              <label className="setup-field">
-                <span>Display name</span>
-                <input
-                  value={editDisplayName}
-                  onChange={(event) => setEditDisplayName(event.target.value)}
-                  maxLength={DISPLAY_NAME_MAX}
-                  disabled={savingSensorId === sensor.sensorId}
-                  autoFocus
-                />
-              </label>
-              {editSensorError && (
-                <p className="banner error" role="alert">
-                  {editSensorError}
-                </p>
-              )}
-              <div className="setup-actions">
-                <button
-                  type="submit"
-                  className="refresh"
-                  disabled={savingSensorId === sensor.sensorId}
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className="setup-secondary"
-                  onClick={() => {
-                    setEditingSensorId(null)
-                    setEditSensorError(null)
-                  }}
-                  disabled={savingSensorId === sensor.sensorId}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="setup-sensor-title">
-                <h3>{sensor.displayName}</h3>
-                <button
-                  type="button"
-                  className="setup-secondary"
-                  onClick={() => beginEditSensor(sensor)}
-                >
-                  Rename
-                </button>
-              </div>
-              <p className="setup-meta">
-                <code>{sensor.sensorId}</code>
-                <span>{typesLabel}</span>
-                <span>{roomNameById(state.rooms, sensor.roomId)}</span>
-              </p>
-            </>
-          )}
-        </div>
-
-        <div className="setup-assign">
-          <label className="setup-field setup-field-inline">
-            <span>Room</span>
-            <select
-              value={assignTargetBySensor[sensor.sensorId] ?? ''}
-              onChange={(event) =>
-                setAssignTargetBySensor((prev) => ({
-                  ...prev,
-                  [sensor.sensorId]: event.target.value,
-                }))
-              }
-              disabled={isBusy || state.rooms.length === 0}
-            >
-              <option value="">Select room…</option>
-              {state.rooms.map((room) => (
-                <option key={room.roomId} value={room.roomId}>
-                  {room.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="setup-actions">
+      <div className={compact ? 'mt-3 space-y-2' : 'space-y-2'}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            className="select select-bordered select-sm w-full sm:max-w-xs"
+            aria-label={`Assign ${sensor.displayName} to room`}
+            value={assignTargetBySensor[sensor.sensorId] ?? sensor.roomId ?? ''}
+            onChange={(event) =>
+              setAssignTargetBySensor((prev) => ({
+                ...prev,
+                [sensor.sensorId]: event.target.value,
+              }))
+            }
+            disabled={isBusy || state.rooms.length === 0}
+          >
+            <option value="">Choose a room…</option>
+            {state.rooms.map((room) => (
+              <option key={room.roomId} value={room.roomId}>
+                {room.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              className="refresh"
+              className="btn btn-primary btn-sm"
               onClick={() => void handleAssign(sensor.sensorId)}
               disabled={isBusy || state.rooms.length === 0}
             >
-              Assign
+              {isBusy ? <span className="loading loading-spinner loading-xs" /> : 'Assign'}
             </button>
             {sensor.roomId != null && (
               <button
                 type="button"
-                className="setup-secondary"
+                className="btn btn-ghost btn-sm"
                 onClick={() => void handleUnassign(sensor)}
                 disabled={isBusy}
               >
-                Unassign
+                Remove
               </button>
             )}
           </div>
-          {assignError && (
-            <p className="banner error" role="alert">
-              {assignError}
-            </p>
-          )}
         </div>
-      </li>
+        {assignError && (
+          <div role="alert" className="alert alert-error alert-soft py-2 text-sm">
+            <span>{assignError}</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderSensorCard = (sensor: SensorSummary, options?: { showRoom?: boolean }) => {
+    const isRenaming = editingSensorId === sensor.sensorId
+    const showRoom = options?.showRoom ?? true
+
+    return (
+      <article key={sensor.sensorId} className="panel p-4">
+        {isRenaming ? (
+          <form
+            className="space-y-3"
+            onSubmit={(event) => void handleSaveSensorName(event, sensor.sensorId)}
+          >
+            <fieldset className="fieldset">
+              <legend className="fieldset-legend">Display name</legend>
+              <input
+                className="input input-bordered w-full"
+                value={editDisplayName}
+                onChange={(event) => setEditDisplayName(event.target.value)}
+                maxLength={DISPLAY_NAME_MAX}
+                disabled={savingSensorId === sensor.sensorId}
+                autoFocus
+              />
+            </fieldset>
+            {editSensorError && (
+              <div role="alert" className="alert alert-error alert-soft">
+                <span>{editSensorError}</span>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="btn btn-sm btn-primary"
+                disabled={savingSensorId === sensor.sensorId}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => {
+                  setEditingSensorId(null)
+                  setEditSensorError(null)
+                }}
+                disabled={savingSensorId === sensor.sensorId}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-base font-medium">{sensor.displayName}</h3>
+                  <span className="badge badge-ghost badge-sm font-mono">
+                    {sensorTypeBadge(sensor.types)}
+                  </span>
+                  {sensor.roomId == null && (
+                    <span className="badge badge-warning badge-soft badge-sm">Needs a room</span>
+                  )}
+                </div>
+                <p className="text-base-content/50 mt-1 font-mono text-xs">{sensor.sensorId}</p>
+                {showRoom && (
+                  <p className="text-base-content/60 mt-1 text-sm">
+                    {roomNameById(state.rooms, sensor.roomId)}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                onClick={() => beginEditSensor(sensor)}
+              >
+                Rename
+              </button>
+            </div>
+            {renderAssignControls(sensor, true)}
+          </>
+        )}
+      </article>
     )
   }
 
   return (
-    <main className="shell">
-      <nav className="topbar" aria-label="Main navigation">
-        <Link className="brand" to="/">
-          <span className="brand-mark" aria-hidden="true">
-            BH
-          </span>
-          <span>Breathing House</span>
+    <AppShell clockLabel={formatLocalClock(clock)} footerLeft="Setup">
+      <div className="mb-4">
+        <Link to="/" className="btn btn-ghost btn-sm font-mono">
+          ← Overview
         </Link>
-        <div className="topbar-meta">
-          <span className="nav-link is-current" aria-current="page">
-            Setup
-          </span>
-          <Link className="back-link" to="/">
-            ← Overview
-          </Link>
-        </div>
-      </nav>
+      </div>
 
-      <section className="detail-hero">
-        <p className="eyebrow">Setup / {formatLocalClock(clock)}</p>
-        <h1>Rooms and sensors</h1>
-        <p className="intro">
-          Create rooms, rename sensors, and assign them. Changes go straight to home-api.
-        </p>
+      <section className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-primary mb-1 font-mono text-[11px] tracking-[0.16em] uppercase">
+            Home setup
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Organize your home</h1>
+          <p className="text-base-content/60 mt-2 max-w-2xl text-sm">
+            Create rooms, then put each sensor in the right place — like areas in Home Assistant.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline"
+          onClick={() => void refresh()}
+          disabled={refreshing || (state.loadState === 'loading' && state.rooms.length === 0)}
+          aria-busy={refreshing}
+        >
+          {refreshing ? (
+            <>
+              <span className="loading loading-spinner loading-xs" />
+              Updating
+            </>
+          ) : (
+            'Refresh'
+          )}
+        </button>
       </section>
 
-      <section className="detail-body setup-body" aria-label="Setup">
-        {state.errorMessage && (
-          <p className="banner error" role="alert">
-            {state.errorMessage}
-          </p>
-        )}
+      {state.errorMessage && (
+        <div role="alert" className="alert alert-error alert-soft mb-4">
+          <span>{state.errorMessage}</span>
+        </div>
+      )}
 
-        {state.loadState === 'loading' && state.rooms.length === 0 && state.sensors.length === 0 && (
-          <p className="banner">Loading rooms and sensors…</p>
-        )}
+      {state.loadState === 'loading' && state.rooms.length === 0 && state.sensors.length === 0 && (
+        <div className="panel mb-4 flex items-center gap-3 px-4 py-8">
+          <span className="loading loading-spinner loading-md text-primary" />
+          <span className="font-mono text-sm">Loading rooms and sensors…</span>
+        </div>
+      )}
 
-        {state.loadState === 'error' && (
-          <p className="banner">
-            Could not reach home-api.{' '}
-            <button type="button" className="refresh" onClick={() => void loadSetup()}>
-              Retry
-            </button>
-          </p>
-        )}
+      {state.loadState === 'error' && (
+        <div role="alert" className="alert alert-warning alert-soft mb-4">
+          <span>Could not reach home-api.</span>
+          <button type="button" className="btn btn-sm" onClick={() => void loadSetup(false)}>
+            Retry
+          </button>
+        </div>
+      )}
 
-        {state.loadState !== 'error' && (
-          <>
-            <div className="detail-block">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Spaces</p>
-                  <h2>Rooms</h2>
+      {state.loadState !== 'error' && (
+        <>
+          <section className="panel mb-5 overflow-hidden">
+            <div className="stats stats-vertical sm:stats-horizontal bg-base-100 w-full">
+              <div className="stat py-4">
+                <div className="stat-title font-mono text-[11px] tracking-wide uppercase">Rooms</div>
+                <div className="stat-value metric-value text-2xl">{state.rooms.length}</div>
+              </div>
+              <div className="stat py-4">
+                <div className="stat-title font-mono text-[11px] tracking-wide uppercase">
+                  Sensors
                 </div>
-                <button type="button" className="refresh" onClick={() => void loadSetup()}>
-                  Refresh
+                <div className="stat-value metric-value text-2xl">{state.sensors.length}</div>
+                <div className="stat-desc font-mono">{assignedSensors.length} assigned</div>
+              </div>
+              <div className="stat py-4">
+                <div className="stat-title font-mono text-[11px] tracking-wide uppercase">
+                  Unassigned
+                </div>
+                <div
+                  className={`stat-value metric-value text-2xl ${
+                    unassignedSensors.length > 0 ? 'text-warning' : 'text-success'
+                  }`}
+                >
+                  {unassignedSensors.length}
+                </div>
+                <div className="stat-desc font-mono">
+                  {unassignedSensors.length > 0 ? 'Needs a room' : 'All placed'}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {unassignedSensors.length > 0 && (
+            <div role="alert" className="alert alert-warning alert-soft mb-5">
+              <div className="w-full">
+                <p className="font-medium">
+                  {unassignedSensors.length === 1
+                    ? '1 sensor still needs a room'
+                    : `${unassignedSensors.length} sensors still need a room`}
+                </p>
+                <p className="text-sm opacity-80">
+                  Assign them so overview and room pages can show readings in the right place.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setTab('unassigned')}
+              >
+                Review
+              </button>
+            </div>
+          )}
+
+          <div role="tablist" className="tabs tabs-box mb-5 w-full max-w-xl">
+            <button
+              type="button"
+              role="tab"
+              className={`tab ${tab === 'rooms' ? 'tab-active' : ''}`}
+              aria-selected={tab === 'rooms'}
+              onClick={() => setTab('rooms')}
+            >
+              Rooms
+              <span className="badge badge-ghost badge-sm ml-2">{state.rooms.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`tab ${tab === 'unassigned' ? 'tab-active' : ''}`}
+              aria-selected={tab === 'unassigned'}
+              onClick={() => setTab('unassigned')}
+            >
+              Needs a room
+              {unassignedSensors.length > 0 && (
+                <span className="badge badge-warning badge-sm ml-2">
+                  {unassignedSensors.length}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`tab ${tab === 'devices' ? 'tab-active' : ''}`}
+              aria-selected={tab === 'devices'}
+              onClick={() => setTab('devices')}
+            >
+              All devices
+            </button>
+          </div>
+
+          {tab === 'rooms' && (
+            <section aria-label="Rooms" className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-base-content/60 text-sm">
+                  Rooms are places in your home. Sensors inherit the room you assign them to.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setShowCreateRoom((open) => !open)}
+                >
+                  {showCreateRoom ? 'Cancel' : 'Add room'}
                 </button>
               </div>
 
-              <form className="setup-create" onSubmit={(event) => void handleCreateRoom(event)}>
-                <p className="setup-form-label">Create a room</p>
-                <div className="setup-form-grid">
-                  <label className="setup-field">
-                    <span>Name</span>
-                    <input
-                      value={createName}
-                      onChange={(event) => setCreateName(event.target.value)}
-                      maxLength={NAME_MAX}
-                      placeholder="Kitchen"
-                      disabled={creating}
-                      required
-                    />
-                  </label>
-                  <label className="setup-field">
-                    <span>Description (optional)</span>
-                    <input
-                      value={createDescription}
-                      onChange={(event) => setCreateDescription(event.target.value)}
-                      maxLength={DESCRIPTION_MAX}
-                      placeholder="South-facing, near the garden door"
-                      disabled={creating}
-                    />
-                  </label>
-                </div>
-                {createError && (
-                  <p className="banner error" role="alert">
-                    {createError}
-                  </p>
-                )}
-                <button type="submit" className="refresh" disabled={creating}>
-                  {creating ? 'Creating…' : 'Create room'}
-                </button>
-              </form>
-
-              {state.loadState === 'ready' && state.rooms.length === 0 && (
-                <p className="banner empty">No rooms yet. Create one above to start assigning sensors.</p>
+              {showCreateRoom && (
+                <form className="panel p-4" onSubmit={(event) => void handleCreateRoom(event)}>
+                  <h2 className="mb-3 text-base font-medium">New room</h2>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <fieldset className="fieldset">
+                      <legend className="fieldset-legend">Name</legend>
+                      <input
+                        className="input input-bordered w-full"
+                        value={createName}
+                        onChange={(event) => setCreateName(event.target.value)}
+                        maxLength={NAME_MAX}
+                        placeholder="Kitchen"
+                        disabled={creating}
+                        required
+                        autoFocus
+                      />
+                    </fieldset>
+                    <fieldset className="fieldset">
+                      <legend className="fieldset-legend">Notes (optional)</legend>
+                      <input
+                        className="input input-bordered w-full"
+                        value={createDescription}
+                        onChange={(event) => setCreateDescription(event.target.value)}
+                        maxLength={DESCRIPTION_MAX}
+                        placeholder="Near the garden door"
+                        disabled={creating}
+                      />
+                    </fieldset>
+                  </div>
+                  {createError && (
+                    <div role="alert" className="alert alert-error alert-soft mt-3">
+                      <span>{createError}</span>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="submit" className="btn btn-primary btn-sm" disabled={creating}>
+                      {creating ? (
+                        <>
+                          <span className="loading loading-spinner loading-xs" />
+                          Creating…
+                        </>
+                      ) : (
+                        'Create room'
+                      )}
+                    </button>
+                  </div>
+                </form>
               )}
 
-              {state.rooms.length > 0 && (
-                <ul className="setup-list">
-                  {state.rooms.map((room) => (
-                    <li key={room.roomId} className="setup-room">
+              {state.loadState === 'ready' && state.rooms.length === 0 && (
+                <div role="alert" className="alert alert-info alert-soft">
+                  <span>No rooms yet. Add a room to start placing sensors.</span>
+                </div>
+              )}
+
+              {deleteRoomError && (
+                <div role="alert" className="alert alert-error alert-soft">
+                  <span>{deleteRoomError}</span>
+                </div>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {state.rooms.map((room) => {
+                  const roomSensors = sensorsByRoom[room.roomId] ?? []
+                  const roomBusy =
+                    savingRoomId === room.roomId || deletingRoomId === room.roomId
+                  return (
+                    <article key={room.roomId} className="panel flex flex-col p-4">
                       {editingRoomId === room.roomId ? (
                         <form
-                          className="setup-inline-form"
+                          className="space-y-3"
                           onSubmit={(event) => void handleSaveRoom(event, room.roomId)}
                         >
-                          <div className="setup-form-grid">
-                            <label className="setup-field">
-                              <span>Name</span>
+                          <div className="grid gap-3">
+                            <fieldset className="fieldset">
+                              <legend className="fieldset-legend">Name</legend>
                               <input
+                                className="input input-bordered w-full"
                                 value={editName}
                                 onChange={(event) => setEditName(event.target.value)}
                                 maxLength={NAME_MAX}
-                                disabled={savingRoomId === room.roomId}
+                                disabled={roomBusy}
                                 autoFocus
                               />
-                            </label>
-                            <label className="setup-field">
-                              <span>Description</span>
+                            </fieldset>
+                            <fieldset className="fieldset">
+                              <legend className="fieldset-legend">Notes</legend>
                               <input
+                                className="input input-bordered w-full"
                                 value={editDescription}
                                 onChange={(event) => setEditDescription(event.target.value)}
                                 maxLength={DESCRIPTION_MAX}
-                                disabled={savingRoomId === room.roomId}
+                                disabled={roomBusy}
                               />
-                            </label>
+                            </fieldset>
                           </div>
                           {editRoomError && (
-                            <p className="banner error" role="alert">
-                              {editRoomError}
-                            </p>
+                            <div role="alert" className="alert alert-error alert-soft">
+                              <span>{editRoomError}</span>
+                            </div>
                           )}
-                          <div className="setup-actions">
+                          <div className="flex flex-wrap gap-2">
                             <button
                               type="submit"
-                              className="refresh"
-                              disabled={savingRoomId === room.roomId}
+                              className="btn btn-sm btn-primary"
+                              disabled={roomBusy}
                             >
                               Save
                             </button>
                             <button
                               type="button"
-                              className="setup-secondary"
+                              className="btn btn-ghost btn-sm"
                               onClick={() => {
                                 setEditingRoomId(null)
                                 setEditRoomError(null)
                               }}
-                              disabled={savingRoomId === room.roomId}
+                              disabled={roomBusy}
                             >
                               Cancel
                             </button>
@@ -535,78 +722,131 @@ export function SetupPage() {
                         </form>
                       ) : (
                         <>
-                          <div className="setup-room-title">
-                            <div>
-                              <h3>
-                                <Link className="setup-room-link" to={`/rooms/${room.roomId}`}>
+                          <div className="mb-3 flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <h2 className="text-lg font-medium">
+                                <Link className="link link-hover" to={`/rooms/${room.roomId}`}>
                                   {room.name}
                                 </Link>
-                              </h3>
-                              <p className="setup-meta">
-                                <span>
-                                  {room.sensorIds.length === 1
-                                    ? '1 sensor'
-                                    : `${room.sensorIds.length} sensors`}
-                                </span>
-                                {room.description ? <span>{room.description}</span> : null}
-                              </p>
+                              </h2>
+                              {room.description && (
+                                <p className="text-base-content/55 mt-1 text-sm">
+                                  {room.description}
+                                </p>
+                              )}
                             </div>
                             <button
                               type="button"
-                              className="setup-secondary"
+                              className="btn btn-ghost btn-xs"
                               onClick={() => beginEditRoom(room)}
+                              disabled={roomBusy}
                             >
                               Edit
                             </button>
                           </div>
+
+                          <p className="text-base-content/45 mb-2 font-mono text-[11px] tracking-wide uppercase">
+                            Sensors · {roomSensors.length}
+                          </p>
+                          {roomSensors.length === 0 ? (
+                            <p className="text-base-content/50 text-sm">
+                              No sensors here yet. Assign some from Needs a room.
+                            </p>
+                          ) : (
+                            <ul className="flex flex-wrap gap-2">
+                              {roomSensors.map((sensor) => (
+                                <li key={sensor.sensorId}>
+                                  <span className="badge badge-soft badge-sm gap-1">
+                                    <span className="font-mono text-[10px] opacity-70">
+                                      {sensorTypeBadge(sensor.types)}
+                                    </span>
+                                    {sensor.displayName}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                            <Link to={`/rooms/${room.roomId}`} className="btn btn-ghost btn-xs">
+                              Open room
+                            </Link>
+                            {unassignedSensors.length > 0 && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-xs"
+                                onClick={() => setTab('unassigned')}
+                              >
+                                Assign sensors
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-xs text-error"
+                              onClick={() => void handleDeleteRoom(room)}
+                              disabled={roomBusy}
+                              aria-busy={deletingRoomId === room.roomId}
+                            >
+                              {deletingRoomId === room.roomId ? 'Removing…' : 'Remove'}
+                            </button>
+                          </div>
                         </>
                       )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="detail-block">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Devices</p>
-                  <h2>Sensors</h2>
-                </div>
+                    </article>
+                  )
+                })}
               </div>
+            </section>
+          )}
 
-              {state.loadState === 'ready' && state.sensors.length === 0 && (
-                <p className="banner empty">
-                  No sensors yet. They appear here after discovery from the gateway.
-                </p>
-              )}
+          {tab === 'unassigned' && (
+            <section aria-label="Unassigned sensors" className="space-y-4">
+              <p className="text-base-content/60 text-sm">
+                These devices were discovered but are not in a room yet. Pick a room and assign.
+              </p>
 
-              {unassignedSensors.length > 0 && (
-                <div className="setup-sensor-group">
-                  <p className="setup-form-label">
-                    Unassigned ({unassignedSensors.length})
-                  </p>
-                  <ul className="setup-list">{unassignedSensors.map(renderSensorRow)}</ul>
+              {state.rooms.length === 0 && (
+                <div role="alert" className="alert alert-info alert-soft">
+                  <span>Create a room first, then come back here to place sensors.</span>
+                  <button type="button" className="btn btn-sm" onClick={() => setTab('rooms')}>
+                    Go to rooms
+                  </button>
                 </div>
               )}
 
-              {assignedSensors.length > 0 && (
-                <div className="setup-sensor-group">
-                  <p className="setup-form-label">
-                    Assigned ({assignedSensors.length})
-                  </p>
-                  <ul className="setup-list">{assignedSensors.map(renderSensorRow)}</ul>
+              {unassignedSensors.length === 0 ? (
+                <div role="alert" className="alert alert-success alert-soft">
+                  <span>All sensors have a room. Nice.</span>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {unassignedSensors.map((sensor) =>
+                    renderSensorCard(sensor, { showRoom: false }),
+                  )}
                 </div>
               )}
-            </div>
-          </>
-        )}
-      </section>
+            </section>
+          )}
 
-      <footer>
-        <span>Setup</span>
-        <span>Breathing House · v0.1</span>
-      </footer>
-    </main>
+          {tab === 'devices' && (
+            <section aria-label="All devices" className="space-y-4">
+              <p className="text-base-content/60 text-sm">
+                Every discovered sensor. Rename, move between rooms, or remove from a room.
+              </p>
+
+              {state.sensors.length === 0 ? (
+                <div role="alert" className="alert alert-info alert-soft">
+                  <span>No sensors yet. They appear after discovery from the gateway.</span>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {state.sensors.map((sensor) => renderSensorCard(sensor))}
+                </div>
+              )}
+            </section>
+          )}
+        </>
+      )}
+    </AppShell>
   )
 }

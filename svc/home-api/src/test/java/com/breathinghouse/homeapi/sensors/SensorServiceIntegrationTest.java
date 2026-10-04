@@ -1,5 +1,6 @@
 package com.breathinghouse.homeapi.sensors;
 
+import com.breathinghouse.homeapi.alerts.AlertRepository;
 import com.breathinghouse.homeapi.alerts.SensorReassignmentAlertHandler;
 import com.breathinghouse.homeapi.config.ClockConfig;
 import com.breathinghouse.homeapi.config.JdbcConfig;
@@ -34,7 +35,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @JdbcTest
 @Import({
         SensorService.class, SensorRepository.class, RoomRepository.class, RoomService.class,
-        HistoryRepository.class, JdbcConfig.class, ClockConfig.class
+        AlertRepository.class, HistoryRepository.class, JdbcConfig.class, ClockConfig.class
 })
 @TestPropertySource(properties = {
         "home-api.database.query-timeout-seconds=2"
@@ -183,7 +184,7 @@ class SensorServiceIntegrationTest {
     }
 
     private List<Double> co2In(String roomId) {
-        return historyRepository.findEnvironmentReadings(roomId, null, null, null, 100, 0)
+        return historyRepository.findEnvironmentReadings(roomId, null, null, null, null, 100, 0)
                 .items().stream().map(EnvironmentReading::co2).toList();
     }
 

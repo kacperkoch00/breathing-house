@@ -106,8 +106,20 @@ export function updateRoom(
   })
 }
 
+export async function deleteRoom(roomId: string): Promise<void> {
+  const path = `/api/v1/rooms/${encodeURIComponent(roomId)}`
+  const response = await fetch(`${getHomeApiBaseUrl()}${path}`, { method: 'DELETE' })
+  if (!response.ok) {
+    throw new HomeApiError(response.status, path, await readErrorMessage(response))
+  }
+}
+
 export function listSensors(): Promise<SensorsResponse> {
   return fetchJson<SensorsResponse>('/api/v1/sensors')
+}
+
+export function getSensor(sensorId: string): Promise<SensorSummary> {
+  return fetchJson<SensorSummary>(`/api/v1/sensors/${encodeURIComponent(sensorId)}`)
 }
 
 export function updateSensorDisplayName(
@@ -141,6 +153,7 @@ export function listEnvironmentReadings(
     to?: string
     limit?: number
     sensorType?: SensorType
+    sensorId?: string
   } = {},
 ): Promise<PageResponse<EnvironmentReading>> {
   const params = new URLSearchParams()
@@ -148,6 +161,7 @@ export function listEnvironmentReadings(
   if (options.to != null) params.set('to', options.to)
   if (options.limit != null) params.set('limit', String(options.limit))
   if (options.sensorType != null) params.set('sensorType', options.sensorType)
+  if (options.sensorId != null) params.set('sensorId', options.sensorId)
   const query = params.toString()
   return fetchJson<PageResponse<EnvironmentReading>>(
     `/api/v1/rooms/${encodeURIComponent(roomId)}/environment-readings${query ? `?${query}` : ''}`,
@@ -191,12 +205,14 @@ export function listAlerts(
     status?: AlertStatus
     roomId?: string
     limit?: number
+    offset?: number
   } = {},
 ): Promise<PageResponse<Alert>> {
   const params = new URLSearchParams()
   if (options.status != null) params.set('status', options.status)
   if (options.roomId != null) params.set('roomId', options.roomId)
   if (options.limit != null) params.set('limit', String(options.limit))
+  if (options.offset != null) params.set('offset', String(options.offset))
   const query = params.toString()
   return fetchJson<PageResponse<Alert>>(`/api/v1/alerts${query ? `?${query}` : ''}`)
 }
