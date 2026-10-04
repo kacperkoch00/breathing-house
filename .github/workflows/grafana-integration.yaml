@@ -166,6 +166,11 @@ jobs:
             --namespace observability \
             --timeout=180s
 
+      - name: Install Postgres
+        run: |
+          kubectl apply -f deploy/k8s/postgres.yaml
+          kubectl rollout status deployment/postgres --timeout=180s
+
       - name: Build backend service images
         run: |
           for service in environment-monitor occupancy-monitor home-api sensors-data-collector; do
