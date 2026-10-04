@@ -3,11 +3,11 @@ import type { EnvironmentReading, SensorSummary } from '../api/types'
 import { TrendChart } from '../charts/TrendChart'
 import { co2Band, humidityBand, temperatureBand, type ComfortBand } from '../comfort'
 import {
-  averageMetric,
   formatConditionCo2,
   formatConditionHumidity,
   formatConditionTemp,
   latestLightReading,
+  latestMetricReading,
   metricSeries,
   overviewMetricSeries,
   seriesStats,
@@ -73,9 +73,9 @@ export function RoomAirView() {
   const primaryReading = overviewMode ? null : state.selectedLatest
   const chartHistory = state.history
 
-  const overviewTemp = averageMetric(state.latestBySensor, 'temperature')
-  const overviewHumidity = averageMetric(state.latestBySensor, 'humidity')
-  const overviewCo2 = averageMetric(state.latestBySensor, 'co2')
+  const overviewTempReading = latestMetricReading(state.latestBySensor, 'temperature')
+  const overviewHumidityReading = latestMetricReading(state.latestBySensor, 'humidity')
+  const overviewCo2Reading = latestMetricReading(state.latestBySensor, 'co2')
   const overviewLight = latestLightReading(state.latestBySensor)
 
   const lightLabel = overviewMode
@@ -97,9 +97,18 @@ export function RoomAirView() {
         ? overviewMetricSeries(chartHistory, metric)
         : metricSeries(chartHistory, metric)
 
-    const tempValue = overviewMode ? overviewTemp : primaryReading?.temperature
-    const humidityValue = overviewMode ? overviewHumidity : primaryReading?.humidity
-    const co2Value = overviewMode ? overviewCo2 : primaryReading?.co2
+    const overviewSource = (reading: EnvironmentReading | null) => {
+      const name = sensorLabel(state.sensors, reading?.sensorId)
+      return name ? `Latest · ${name}` : 'Latest reading'
+    }
+
+    const tempValue = overviewMode
+      ? overviewTempReading?.temperature
+      : primaryReading?.temperature
+    const humidityValue = overviewMode
+      ? overviewHumidityReading?.humidity
+      : primaryReading?.humidity
+    const co2Value = overviewMode ? overviewCo2Reading?.co2 : primaryReading?.co2
 
     const cards: MetricCardModel[] = [
       {
@@ -110,7 +119,7 @@ export function RoomAirView() {
         formatValue: (value) => `${value.toFixed(1)}°`,
         points: seriesFor('temperature'),
         stats: seriesStats(seriesFor('temperature')),
-        source: overviewMode ? 'Room average' : chartSource,
+        source: overviewMode ? overviewSource(overviewTempReading) : chartSource,
       },
       {
         key: 'humidity',
@@ -120,7 +129,7 @@ export function RoomAirView() {
         formatValue: (value) => `${Math.round(value)}%`,
         points: seriesFor('humidity'),
         stats: seriesStats(seriesFor('humidity')),
-        source: overviewMode ? 'Room average' : chartSource,
+        source: overviewMode ? overviewSource(overviewHumidityReading) : chartSource,
       },
       {
         key: 'co2',
@@ -130,7 +139,7 @@ export function RoomAirView() {
         formatValue: (value) => `${Math.round(value)}`,
         points: seriesFor('co2'),
         stats: seriesStats(seriesFor('co2')),
-        source: overviewMode ? 'Room average' : chartSource,
+        source: overviewMode ? overviewSource(overviewCo2Reading) : chartSource,
       },
     ]
 
@@ -138,9 +147,9 @@ export function RoomAirView() {
     return cards.filter((card) => sensorProvides(activeSensor, primaryReading, card.key))
   }, [
     overviewMode,
-    overviewTemp,
-    overviewHumidity,
-    overviewCo2,
+    overviewTempReading,
+    overviewHumidityReading,
+    overviewCo2Reading,
     primaryReading,
     activeSensor,
     selectedSensorId,
@@ -215,7 +224,7 @@ export function RoomAirView() {
       <p className="text-base-content/45 mb-4 text-xs">
         {overviewMode
           ? multiSensor
-            ? 'Room overview · averages across sensors · light from latest reading'
+            ? 'Room overview · latest value per metric across sensors'
             : sensorLabel(state.sensors, state.chartSensorId)
               ? `Viewing ${sensorLabel(state.sensors, state.chartSensorId)}`
               : 'Room overview'

@@ -170,19 +170,23 @@ export function latestReadingPerSensor(
   return [...bySensor.values()]
 }
 
-/** Average a numeric metric across latest-per-sensor readings (nulls skipped). */
-export function averageMetric(
+/** Most recent reading that has a numeric value for the metric. */
+export function latestMetricReading(
   readings: EnvironmentReading[],
   metric: MetricKey,
-): number | null {
-  const values = readings
-    .map((reading) => reading[metric])
-    .filter((value): value is number => value != null && !Number.isNaN(value))
-  if (values.length === 0) return null
-  return values.reduce((sum, value) => sum + value, 0) / values.length
+): EnvironmentReading | null {
+  const ranked = [...readings].sort(
+    (a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime(),
+  )
+  return (
+    ranked.find((reading) => {
+      const value = reading[metric]
+      return value != null && !Number.isNaN(value)
+    }) ?? null
+  )
 }
 
-/** Most recent reading that carries a light level (newest-first input). */
+/** Most recent reading that carries a light level. */
 export function latestLightReading(
   readings: EnvironmentReading[],
 ): EnvironmentReading | null {
@@ -192,23 +196,26 @@ export function latestLightReading(
   return ranked.find((reading) => Boolean(reading.lightLevel?.trim())) ?? null
 }
 
-/** Synthetic "now" reading for room overview comfort / tiles. */
+/** Synthetic "now" reading for room overview comfort / tiles (latest per field). */
 export function overviewReading(
   latestBySensor: EnvironmentReading[],
 ): EnvironmentReading | null {
   if (latestBySensor.length === 0) return null
+  const temp = latestMetricReading(latestBySensor, 'temperature')
+  const humidity = latestMetricReading(latestBySensor, 'humidity')
+  const co2 = latestMetricReading(latestBySensor, 'co2')
   const light = latestLightReading(latestBySensor)
-  const base = latestBySensor[0]!
+  const base = temp ?? humidity ?? co2 ?? light ?? latestBySensor[0]!
   return {
     ...base,
     sensorId: null,
     sensorType: light?.sensorType ?? base.sensorType,
-    temperature: averageMetric(latestBySensor, 'temperature'),
-    humidity: averageMetric(latestBySensor, 'humidity'),
-    co2: averageMetric(latestBySensor, 'co2'),
+    temperature: temp?.temperature ?? null,
+    humidity: humidity?.humidity ?? null,
+    co2: co2?.co2 ?? null,
     light: light?.light ?? null,
     lightLevel: light?.lightLevel ?? null,
-    observedAt: light?.observedAt ?? base.observedAt,
+    observedAt: base.observedAt,
   }
 }
 
