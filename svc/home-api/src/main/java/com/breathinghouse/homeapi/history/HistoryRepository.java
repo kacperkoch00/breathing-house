@@ -66,6 +66,7 @@ public class HistoryRepository {
     public PageResponse<EnvironmentReading> findEnvironmentReadings(
             String roomId,
             SensorType sensorType,
+            String sensorId,
             Instant from,
             Instant to,
             int limit,
@@ -78,6 +79,10 @@ public class HistoryRepository {
                 """);
         MapSqlParameterSource params = new MapSqlParameterSource("roomId", roomId);
         appendOptionalFilters(sql, params, sensorType == null ? null : sensorType.name(), "sensor_type", from, to);
+        if (sensorId != null && !sensorId.isBlank()) {
+            sql.append(" AND sensor_id = :sensorId");
+            params.addValue("sensorId", sensorId);
+        }
         sql.append(" ORDER BY observed_at DESC, id DESC LIMIT :fetchLimit OFFSET :offset");
         params.addValue("fetchLimit", limit + 1);
         params.addValue("offset", offset);

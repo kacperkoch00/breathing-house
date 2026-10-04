@@ -6,7 +6,8 @@ image:
   pullPolicy: IfNotPresent
 
 # Cluster-internal home-api base URL for the nginx /api proxy (no trailing slash).
-homeApiUpstream: http://home-api:8082
+# Use the cluster FQDN: nginx variable proxy_pass does not apply resolv.conf search domains.
+homeApiUpstream: http://home-api.default.svc.cluster.local:8082
 
 imagePullSecrets: []
 nameOverride: ""

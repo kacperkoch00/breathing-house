@@ -1,5 +1,6 @@
 package com.breathinghouse.homeapi.rooms;
 
+import com.breathinghouse.homeapi.alerts.AlertRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -30,6 +31,9 @@ class RoomServiceTest {
 
     @Mock
     private RoomRepository roomRepository;
+
+    @Mock
+    private AlertRepository alertRepository;
 
     @Test
     void createGeneratesUuidRoomIdAndPersistsWithClock() {
@@ -95,6 +99,26 @@ class RoomServiceTest {
     }
 
     @Test
+    void deleteResolvesAlertsThenDeletesRoom() {
+        when(roomRepository.exists("room-1")).thenReturn(true);
+
+        service().deleteRoom("room-1");
+
+        verify(alertRepository).resolveAllAlertsInRoom("room-1", NOW);
+        verify(roomRepository).delete("room-1");
+    }
+
+    @Test
+    void deleteUnknownRoomDoesNotWrite() {
+        when(roomRepository.exists("ghost")).thenReturn(false);
+
+        assertThatThrownBy(() -> service().deleteRoom("ghost"))
+                .isInstanceOf(RoomNotFoundException.class);
+        verify(alertRepository, never()).resolveAllAlertsInRoom(anyString(), any());
+        verify(roomRepository, never()).delete(anyString());
+    }
+
+    @Test
     void roomFieldsTrimAndEnforceLimits() {
         assertThat(RoomFields.normalizeName("  客厅  ")).isEqualTo("客厅");
         assertThat(RoomFields.normalizeName("x".repeat(100))).hasSize(100);
@@ -111,6 +135,6 @@ class RoomServiceTest {
     }
 
     private RoomService service() {
-        return new RoomService(roomRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new RoomService(roomRepository, alertRepository, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 }

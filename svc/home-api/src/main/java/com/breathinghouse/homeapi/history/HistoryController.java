@@ -29,12 +29,13 @@ public class HistoryController {
     public PageResponse<EnvironmentReading> environmentReadings(
             @PathVariable @NotBlank String roomId,
             @RequestParam(required = false) SensorType sensorType,
+            @RequestParam(required = false) String sensorId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit,
             @RequestParam(defaultValue = "0") @Min(0) int offset) {
         validateRange(from, to);
-        return historyRepository.findEnvironmentReadings(roomId, sensorType, from, to, limit, offset);
+        return historyRepository.findEnvironmentReadings(roomId, sensorType, sensorId, from, to, limit, offset);
     }
 
     @GetMapping("/rooms/{roomId}/occupancy-events")

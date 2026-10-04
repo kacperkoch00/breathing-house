@@ -1,5 +1,6 @@
 package com.breathinghouse.homeapi.rooms;
 
+import com.breathinghouse.homeapi.alerts.AlertRepository;
 import com.breathinghouse.homeapi.config.ClockConfig;
 import com.breathinghouse.homeapi.config.JdbcConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @JdbcTest
-@Import({RoomRepository.class, RoomService.class, JdbcConfig.class, ClockConfig.class})
+@Import({RoomRepository.class, RoomService.class, AlertRepository.class, JdbcConfig.class, ClockConfig.class})
 @TestPropertySource(properties = {
         "home-api.database.query-timeout-seconds=2"
 })
@@ -30,6 +31,8 @@ class RoomServiceIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM home_api.alert");
+        jdbc.update("DELETE FROM home_api.alert_state");
         jdbc.update("DELETE FROM home_api.sensor");
         jdbc.update("DELETE FROM home_api.room");
     }
@@ -79,5 +82,30 @@ class RoomServiceIntegrationTest {
 
         Integer count = jdbc.queryForObject("SELECT count(*) FROM home_api.room", Integer.class);
         assertThat(count).isZero();
+    }
+
+    @Test
+    void deleteRemovesRoomAndUnassignsSensors() {
+        RoomSummary created = roomService.createRoom("Spare", null);
+        jdbc.update(
+                "INSERT INTO home_api.sensor (sensor_id, display_name, room_id) VALUES ('air-1', 'air-1', ?)",
+                created.roomId());
+        jdbc.update("""
+                INSERT INTO home_api.alert (
+                  rule_id, room_id, sensor_id, severity, status, message, triggered_at,
+                  last_evaluated_at, rule_snapshot
+                ) VALUES ('air-data-stale', ?, 'air-1', 'INFO', 'ACTIVE', 'stale', NOW(), NOW(), '{}')
+                """, created.roomId());
+
+        roomService.deleteRoom(created.roomId());
+
+        assertThatThrownBy(() -> roomService.getRoom(created.roomId()))
+                .isInstanceOf(RoomNotFoundException.class);
+        assertThat(jdbc.queryForObject(
+                "SELECT room_id FROM home_api.sensor WHERE sensor_id = 'air-1'", String.class))
+                .isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM home_api.alert WHERE room_id = ?", String.class, created.roomId()))
+                .isEqualTo("RESOLVED");
     }
 }

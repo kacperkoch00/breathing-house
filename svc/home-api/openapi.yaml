@@ -176,7 +176,7 @@ paths:
         Partial update. At least one of name or description must be present;
         an empty patch is rejected. An omitted field is left unchanged; an
         explicit null description (or one that is blank after trimming) clears
-        it. roomId never changes. Rooms cannot be deleted.
+        it. roomId never changes.
       parameters:
         - $ref: '#/components/parameters/RoomId'
       requestBody:
@@ -196,6 +196,24 @@ paths:
                 $ref: '#/components/schemas/Room'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+    delete:
+      operationId: deleteRoom
+      tags: [Rooms]
+      summary: Delete a room
+      description: >
+        Hard-deletes the room. Assigned sensors become unassigned
+        (`room_id` set to null). Active alerts for the room are resolved.
+        Historical environment readings and occupancy events that reference
+        the room id are retained.
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '204':
+          description: Room deleted
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -339,6 +357,11 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/SensorType'
+        - name: sensorId
+          in: query
+          description: Optional filter for a single physical sensor
+          schema:
+            type: string
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
         - $ref: '#/components/parameters/Limit'

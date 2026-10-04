@@ -362,6 +362,25 @@ public class AlertRepository {
                 """, params);
     }
 
+    /** Resolve every ACTIVE alert (and clear state) for a room before the room is deleted. */
+    public void resolveAllAlertsInRoom(String roomId, Instant now) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("roomId", roomId)
+                .addValue("now", Timestamp.from(now));
+        jdbc.update("""
+                UPDATE home_api.alert
+                SET status = 'RESOLVED', resolved_at = :now, last_evaluated_at = :now
+                WHERE status = 'ACTIVE' AND room_id = :roomId
+                """, params);
+        jdbc.update("""
+                UPDATE home_api.alert_state
+                SET condition_active = false,
+                    condition_started_at = NULL,
+                    last_evaluated_at = :now
+                WHERE condition_active = true AND room_id = :roomId
+                """, params);
+    }
+
     public void resolveAlertsOutsideRooms(String ruleId, Collection<String> rooms, Instant now) {
         if (rooms.contains("*")) {
             return;

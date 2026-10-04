@@ -39,7 +39,7 @@ class HistoryRepositoryTest {
         insertEnvironment("living-room", "ROOM", "2026-10-03T10:00:00Z", 23.0, 46.0, null, 12.0, "BRIGHT");
 
         PageResponse<EnvironmentReading> page = historyRepository.findEnvironmentReadings(
-                "living-room", null, null, null, 2, 0);
+                "living-room", null, null, null, null, 2, 0);
 
         assertThat(page.hasMore()).isTrue();
         assertThat(page.items()).hasSize(2);
@@ -59,6 +59,7 @@ class HistoryRepositoryTest {
         PageResponse<EnvironmentReading> page = historyRepository.findEnvironmentReadings(
                 "living-room",
                 SensorType.AIR,
+                null,
                 Instant.parse("2026-10-03T09:00:00Z"),
                 Instant.parse("2026-10-03T12:00:00Z"),
                 100,
@@ -116,7 +117,7 @@ class HistoryRepositoryTest {
                 Instant.parse("2026-10-03T10:00:00Z"), Instant.parse("2026-10-03T10:00:00Z"));
 
         PageResponse<EnvironmentReading> page = historyRepository.findEnvironmentReadings(
-                "living-room", null, null, null, 100, 0);
+                "living-room", null, null, null, null, 100, 0);
 
         assertThat(page.items()).extracting(EnvironmentReading::sensorId)
                 .containsExactly(null, "sensor-9");
@@ -145,14 +146,33 @@ class HistoryRepositoryTest {
         insertOccupancy("new-room", "PRESENCE", false, null, "2026-10-03T09:00:00Z");
         insertOccupancy(null, "PRESENCE", true, null, "2026-10-03T10:00:00Z");
 
-        assertThat(historyRepository.findEnvironmentReadings("old-room", null, null, null, 100, 0).items())
+        assertThat(historyRepository.findEnvironmentReadings("old-room", null, null, null, null, 100, 0).items())
                 .extracting(EnvironmentReading::co2).containsExactly(700.0);
-        assertThat(historyRepository.findEnvironmentReadings("new-room", null, null, null, 100, 0).items())
+        assertThat(historyRepository.findEnvironmentReadings("new-room", null, null, null, null, 100, 0).items())
                 .extracting(EnvironmentReading::co2).containsExactly(800.0);
         assertThat(historyRepository.findOccupancyEvents("old-room", null, null, null, 100, 0).items())
                 .extracting(OccupancyEvent::present).containsExactly(true);
         assertThat(historyRepository.findOccupancyEvents("new-room", null, null, null, 100, 0).items())
                 .extracting(OccupancyEvent::present).containsExactly(false);
+    }
+
+    @Test
+    void environmentSensorIdFilter() {
+        jdbcTemplate.update("""
+                INSERT INTO environment.environment_reading (
+                  room_id, sensor_id, sensor_type, co2, observed_at, received_at
+                ) VALUES ('living-room', 'air-1', 'AIR', 700, ?, ?),
+                         ('living-room', 'air-10', 'AIR', 900, ?, ?)
+                """,
+                Instant.parse("2026-10-03T09:00:00Z"), Instant.parse("2026-10-03T09:00:00Z"),
+                Instant.parse("2026-10-03T10:00:00Z"), Instant.parse("2026-10-03T10:00:00Z"));
+
+        PageResponse<EnvironmentReading> page = historyRepository.findEnvironmentReadings(
+                "living-room", null, "air-10", null, null, 100, 0);
+
+        assertThat(page.items()).hasSize(1);
+        assertThat(page.items().getFirst().sensorId()).isEqualTo("air-10");
+        assertThat(page.items().getFirst().co2()).isEqualTo(900.0);
     }
 
     @Test

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-export HOME_API_UPSTREAM="${HOME_API_UPSTREAM:-http://home-api:8082}"
+export HOME_API_UPSTREAM="${HOME_API_UPSTREAM:-http://home-api.default.svc.cluster.local:8082}"
 
 # Strip a trailing slash so /api/... is forwarded intact to home-api.
 HOME_API_UPSTREAM="${HOME_API_UPSTREAM%/}"
