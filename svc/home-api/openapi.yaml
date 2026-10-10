@@ -9,8 +9,9 @@ info:
 
     Domain model: a room is an explicit, user-managed place (technical
     roomId = server-generated UUID, editable name and description). A sensor
-    is a physical device discovered from incoming data (technical sensorId,
-    editable displayName). A sensor belongs to at most one room at a time and
+    is a physical device (technical sensorId, editable displayName). Sensors are
+    paired through the API or registered automatically when they send data.
+    A sensor belongs to at most one room at a time and
     can be moved or unassigned. Every history record snapshots the room the
     sensor was assigned to when the record was ingested, so history stays
     under the original room after a move and records ingested while a sensor
@@ -278,18 +279,55 @@ paths:
     get:
       operationId: listSensors
       tags: [Sensors]
-      summary: List discovered sensors
+      summary: List known sensors
       description: >
-        Lists sensors that have sent data (they are registered automatically by
-        the monitors) ordered by sensorId. types is derived from the distinct
-        sensor_type / event_type values found in history for that sensor.
+        Lists paired sensors ordered by sensorId. types is derived from the
+        distinct sensor_type / event_type values found in history for that
+        sensor. A paired sensor with no history yet has an empty types list.
       responses:
         '200':
-          description: Discovered sensors
+          description: Known sensors
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SensorsResponse'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+    post:
+      operationId: pairSensor
+      tags: [Sensors]
+      summary: Pair a sensor
+      description: >
+        Adds the device to the known-sensor list. sensorId is the immutable
+        identifier reported by the hardware. displayName defaults to sensorId
+        and is not overwritten if the sensor is already paired (200).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairSensorRequest'
+            example:
+              sensorId: air-11
+      responses:
+        '201':
+          description: Sensor paired
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '200':
+          description: Sensor was already paired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sensor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/DatabaseFailure'
   /api/v1/sensors/{sensorId}:
@@ -315,9 +353,8 @@ paths:
       tags: [Sensors]
       summary: Rename a discovered sensor
       description: >
-        Updates the presentation displayName only. Sensors cannot be created
-        through the API, and sensorId never changes. Duplicate display names
-        are allowed.
+        Updates the presentation displayName only. sensorId never changes.
+        Duplicate display names are allowed.
       parameters:
         - $ref: '#/components/parameters/SensorId'
       requestBody:
@@ -337,6 +374,23 @@ paths:
                 $ref: '#/components/schemas/Sensor'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/DatabaseFailure'
+    delete:
+      operationId: unpairSensor
+      tags: [Sensors]
+      summary: Unpair a sensor
+      description: >
+        Removes the device from the known-sensor list. History rows are kept.
+        Active alerts for the sensor's current room are resolved. The sensor
+        can be paired again later.
+      parameters:
+        - $ref: '#/components/parameters/SensorId'
+      responses:
+        '204':
+          description: Sensor unpaired
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -655,6 +709,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Sensor'
+    PairSensorRequest:
+      type: object
+      required: [sensorId]
+      properties:
+        sensorId:
+          type: string
+          description: Immutable technical identifier reported by the device
+          minLength: 1
+          maxLength: 200
+        displayName:
+          type: string
+          description: Optional presentation name; defaults to sensorId on first pair
+          minLength: 1
+          maxLength: 100
     UpdateSensorRequest:
       type: object
       required: [displayName]

@@ -1,11 +1,19 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { listRooms, listSensors } from './api/homeApi'
+import {
+  admitGatewaySensor,
+  listGatewayCandidates,
+  startGatewayScan,
+  type GatewayCandidate,
+  type GatewayScanStatus,
+} from './api/gatewayApi'
+import { listRooms, listSensors, pairSensor, unpairSensor } from './api/homeApi'
 import type { RoomSummary, SensorSummary } from './api/types'
 import { AppShell } from './AppShell'
 import { formatLocalClock, formatUpdatedLabel, roomNameMap } from './overview'
 import {
-  primarySensorKind,
+  inferSensorKindFromId,
+  resolveSensorKind,
   sensorIconToneClass,
   sensorKindBadgeClass,
   sensorKindLabel,
@@ -45,12 +53,18 @@ const FILTERS: { id: SensorFilter; label: string }[] = [
 function matchesFilter(sensor: SensorSummary, filter: SensorFilter): boolean {
   if (filter === 'ALL') return true
   if (filter === 'UNASSIGNED') return sensor.roomId == null
-  return sensor.types.includes(filter)
+  if (sensor.types.includes(filter)) return true
+  return inferSensorKindFromId(sensor.sensorId) === filter
 }
 
 export function SensorsPage() {
   const [state, setState] = useState<SensorsState>(initialState)
   const [filter, setFilter] = useState<SensorFilter>('ALL')
+  const [scanOpen, setScanOpen] = useState(false)
+  const [scan, setScan] = useState<GatewayScanStatus | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [pairingId, setPairingId] = useState<string | null>(null)
+  const [unpairingId, setUnpairingId] = useState<string | null>(null)
 
   const loadSensors = useCallback(async (isRefresh: boolean) => {
     if (!isRefresh) {
@@ -77,6 +91,74 @@ export function SensorsPage() {
   }, [])
 
   const { refreshing, refresh, clock } = useAutoRefresh(loadSensors)
+  const knownIds = useMemo(() => new Set(state.sensors.map((sensor) => sensor.sensorId)), [state.sensors])
+
+  useEffect(() => {
+    if (!scanOpen || scan?.state !== 'scanning') {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void listGatewayCandidates()
+        .then((next) => setScan(next))
+        .catch((error) => setScanError(error instanceof Error ? error.message : 'Scan failed'))
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [scanOpen, scan?.state])
+
+  const handleScan = async () => {
+    setScanOpen(true)
+    setScanError(null)
+    setScan(null)
+    try {
+      setScan(await startGatewayScan())
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Could not reach the gateway')
+    }
+  }
+
+  const handlePair = async (candidate: GatewayCandidate) => {
+    setPairingId(candidate.sensorId)
+    setScanError(null)
+    try {
+      if (!knownIds.has(candidate.sensorId)) {
+        await pairSensor(candidate.sensorId)
+      }
+      try {
+        await admitGatewaySensor(candidate.sensorId)
+      } catch (error) {
+        setScanError(error instanceof Error ? error.message : 'Gateway admit failed')
+      }
+      try {
+        setScan(await listGatewayCandidates())
+      } catch {
+        // list refresh is best-effort; pair/admit already ran
+      }
+      await loadSensors(true)
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Failed to pair sensor')
+    } finally {
+      setPairingId(null)
+    }
+  }
+
+  const handleUnpair = async (sensor: SensorSummary) => {
+    const confirmed = window.confirm(
+      `Remove “${sensor.displayName}” from known devices?\n\nHistory is kept. The board can be paired again later.`,
+    )
+    if (!confirmed) return
+    setUnpairingId(sensor.sensorId)
+    try {
+      await unpairSensor(sensor.sensorId)
+      await loadSensors(true)
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        errorMessage: error instanceof Error ? error.message : 'Failed to unpair sensor',
+      }))
+    } finally {
+      setUnpairingId(null)
+    }
+  }
   const roomLabels = useMemo(() => roomNameMap(state.rooms), [state.rooms])
   const filtered = useMemo(
     () => state.sensors.filter((sensor) => matchesFilter(sensor, filter)),
@@ -98,7 +180,7 @@ export function SensorsPage() {
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Sensors</h1>
           <p className="text-base-content/60 mt-2 max-w-2xl text-sm">
-            Every discovered device in the home. Open one for latest readings and recent history.
+            Known devices in the home. Scan to pair a blinking sensor, or open one for readings.
           </p>
           <p className="text-base-content/45 mt-2 font-mono text-xs" aria-live="polite">
             {updatedLabel}
@@ -109,8 +191,8 @@ export function SensorsPage() {
             type="button"
             className="btn btn-sm btn-outline"
             title="Scan the home via the gateway for new sensors"
-            // TODO: trigger gateway sensor discovery scan
-            onClick={() => {}}
+            onClick={() => void handleScan()}
+            disabled={scanOpen && scan?.state === 'scanning'}
           >
             Scan
           </button>
@@ -174,7 +256,7 @@ export function SensorsPage() {
         <div className="panel px-4 py-8">
           <p className="font-medium">No sensors yet</p>
           <p className="text-base-content/60 mt-1 text-sm">
-            Devices appear here after they send data through the gateway.
+            Press Pair on a sensor, then Scan to add it.
           </p>
         </div>
       )}
@@ -189,7 +271,8 @@ export function SensorsPage() {
       {filtered.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((sensor) => {
-            const kind = primarySensorKind(sensor.types)
+            const kind = resolveSensorKind(sensor.types, sensor.sensorId)
+            const typeBadges = sensor.types.length > 0 ? sensor.types : kind ? [kind] : []
             const roomLabel =
               sensor.roomId == null
                 ? 'Unassigned'
@@ -214,10 +297,10 @@ export function SensorsPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {sensor.types.length === 0 ? (
+                    {typeBadges.length === 0 ? (
                       <span className="badge badge-ghost badge-sm">Unknown</span>
                     ) : (
-                      sensor.types.map((type) => (
+                      typeBadges.map((type) => (
                         <span
                           key={type}
                           className={`badge badge-sm font-normal ${sensorKindBadgeClass(type)}`}
@@ -227,12 +310,94 @@ export function SensorsPage() {
                       ))
                     )}
                   </div>
-                  <p className="text-base-content/55 mt-auto text-sm">{roomLabel}</p>
+                  <div className="mt-auto flex items-center justify-between gap-2">
+                    <p className="text-base-content/55 text-sm">{roomLabel}</p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs"
+                      disabled={unpairingId === sensor.sensorId}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void handleUnpair(sensor)
+                      }}
+                    >
+                      {unpairingId === sensor.sensorId ? 'Removing' : 'Unpair'}
+                    </button>
+                  </div>
                 </article>
               </Link>
             )
           })}
         </div>
+      )}
+      {scanOpen && (
+        <dialog className="modal modal-open" aria-label="Scan for sensors">
+          <div className="modal-box">
+            <h2 className="text-lg font-semibold">Scan for sensors</h2>
+            <p className="text-base-content/60 mt-1 text-sm">
+              Press Pair on the device so its LED blinks, then add it here.
+            </p>
+            {scan?.state === 'scanning' && (
+              <p className="text-base-content/55 mt-3 flex items-center gap-2 font-mono text-xs">
+                <span className="loading loading-spinner loading-xs" />
+                Looking for devices…
+              </p>
+            )}
+            {scan?.state === 'complete' && (scan.candidates ?? []).length === 0 && !scanError && (
+              <p className="text-base-content/55 mt-3 text-sm">
+                Scan finished. No pairing advertisement was seen.
+              </p>
+            )}
+            {(scanError || scan?.bleError) && (
+              <div role="alert" className="alert alert-error alert-soft mt-3">
+                <span className="text-sm">{scanError ?? scan?.bleError}</span>
+              </div>
+            )}
+            <ul className="mt-4 space-y-2">
+              {(scan?.candidates ?? []).length === 0 && scan?.state === 'scanning' && !scanError && (
+                <li className="text-base-content/55 text-sm">No pairing sensors yet.</li>
+              )}
+              {(scan?.candidates ?? []).map((candidate) => {
+                const known = knownIds.has(candidate.sensorId)
+                const busy = pairingId === candidate.sensorId
+                return (
+                  <li
+                    key={candidate.sensorId}
+                    className="flex items-center justify-between gap-3 rounded-box border border-base-300 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{candidate.sensorId}</p>
+                      <p className="text-base-content/45 font-mono text-[11px]">
+                        {candidate.type ?? 'Unknown'}
+                        {known ? ' · already in list' : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={busy}
+                      onClick={() => void handlePair(candidate)}
+                    >
+                      {busy ? 'Adding' : known ? 'Accept again' : 'Accept'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <div className="modal-action">
+              <button type="button" className="btn" onClick={() => setScanOpen(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="modal-backdrop"
+            aria-label="Close scan"
+            onClick={() => setScanOpen(false)}
+          />
+        </dialog>
       )}
     </AppShell>
   )

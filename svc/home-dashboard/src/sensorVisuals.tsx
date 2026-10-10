@@ -11,6 +11,22 @@ export function primarySensorKind(types: string[]): KnownSensorKind | null {
   return null
 }
 
+/** Pairing often knows the kind before the first reading exists. */
+export function inferSensorKindFromId(sensorId: string): KnownSensorKind | null {
+  const lower = sensorId.trim().toLowerCase()
+  for (const kind of KIND_PRIORITY) {
+    const prefix = kind.toLowerCase()
+    if (lower.startsWith(`${prefix}-`) || lower.startsWith(`${prefix}_`)) {
+      return kind
+    }
+  }
+  return null
+}
+
+export function resolveSensorKind(types: string[], sensorId: string): KnownSensorKind | null {
+  return primarySensorKind(types) ?? inferSensorKindFromId(sensorId)
+}
+
 export function sensorKindLabel(kind: KnownSensorKind | string): string {
   switch (kind) {
     case 'AIR':

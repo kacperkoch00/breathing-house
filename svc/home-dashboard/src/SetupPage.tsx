@@ -13,6 +13,7 @@ import {
 import type { RoomSummary, SensorSummary } from './api/types'
 import { AppShell } from './AppShell'
 import { formatLocalClock } from './overview'
+import { inferSensorKindFromId } from './sensorVisuals'
 import { useAutoRefresh } from './useAutoRefresh'
 
 const NAME_MAX = 100
@@ -55,9 +56,9 @@ function roomNameById(rooms: RoomSummary[], roomId: string | null): string {
   return rooms.find((room) => room.roomId === roomId)?.name ?? roomId
 }
 
-function sensorTypeBadge(types: string[]): string {
-  if (types.length === 0) return 'Unknown'
-  return types.join(' · ')
+function sensorTypeBadge(types: string[], sensorId: string): string {
+  if (types.length > 0) return types.join(' · ')
+  return inferSensorKindFromId(sensorId) ?? 'Unknown'
 }
 
 export function SetupPage() {
@@ -406,7 +407,7 @@ export function SetupPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-base font-medium">{sensor.displayName}</h3>
                   <span className="badge badge-ghost badge-sm font-mono">
-                    {sensorTypeBadge(sensor.types)}
+                    {sensorTypeBadge(sensor.types, sensor.sensorId)}
                   </span>
                   {sensor.roomId == null && (
                     <span className="badge badge-warning badge-soft badge-sm">Needs a room</span>
@@ -758,7 +759,7 @@ export function SetupPage() {
                                 <li key={sensor.sensorId}>
                                   <span className="badge badge-soft badge-sm gap-1">
                                     <span className="font-mono text-[10px] opacity-70">
-                                      {sensorTypeBadge(sensor.types)}
+                                      {sensorTypeBadge(sensor.types, sensor.sensorId)}
                                     </span>
                                     {sensor.displayName}
                                   </span>

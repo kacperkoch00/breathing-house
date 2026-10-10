@@ -1,8 +1,11 @@
 package com.breathinghouse.homeapi.sensors;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -81,6 +84,28 @@ public class SensorRepository {
                         .addValue("sensorId", sensorId)
                         .addValue("displayName", displayName)
                         .addValue("now", Timestamp.from(now)));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int insertIgnore(String sensorId, String displayName, Instant now) {
+        try {
+            return jdbc.update("""
+                    INSERT INTO home_api.sensor (sensor_id, display_name, created_at, updated_at)
+                    VALUES (:sensorId, :displayName, :now, :now)
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("sensorId", sensorId)
+                            .addValue("displayName", displayName)
+                            .addValue("now", Timestamp.from(now)));
+        } catch (DuplicateKeyException ex) {
+            return 0;
+        }
+    }
+
+    public int delete(String sensorId) {
+        return jdbc.update(
+                "DELETE FROM home_api.sensor WHERE sensor_id = :sensorId",
+                new MapSqlParameterSource("sensorId", sensorId));
     }
 
     public int updateRoom(String sensorId, String roomId, Instant now) {

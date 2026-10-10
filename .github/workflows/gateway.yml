@@ -1,0 +1,111 @@
+name: gateway CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'svc/gateway/**'
+      - 'scripts/simulate-air-sensor-windows.py'
+      - '.github/workflows/gateway.yml'
+  pull_request:
+    paths:
+      - 'svc/gateway/**'
+      - 'scripts/simulate-air-sensor-windows.py'
+      - '.github/workflows/gateway.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: svc/gateway/app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: svc/gateway/app/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile
+        working-directory: .
+        run: |
+          python -m py_compile \
+            svc/gateway/app/heartbeat.py \
+            svc/gateway/app/pairing.py \
+            svc/gateway/app/pairing_ble.py \
+            scripts/simulate-air-sensor-windows.py
+      - name: Unit tests
+        run: python -m unittest test_pairing.py -v
+      - name: Syntax-check setup scripts
+        working-directory: .
+        run: bash -n svc/gateway/setup/*.sh
+      - name: Start Mosquitto
+        working-directory: .
+        run: |
+          printf "listener 1883\nallow_anonymous true\n" > /tmp/mosquitto.conf
+          docker run -d \
+            --name mosquitto \
+            -p 1883:1883 \
+            -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2.0.18 \
+            mosquitto -c /mosquitto/config/mosquitto.conf
+          for attempt in $(seq 1 30); do
+            if python -c 'import socket; s=socket.create_connection(("127.0.0.1", 1883), 1); s.close()'; then
+              echo "Mosquitto is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs mosquitto
+          exit 1
+      - name: Heartbeat MQTT smoke
+        env:
+          MQTT_HOST: 127.0.0.1
+          MQTT_PORT: 1883
+          HEARTBEAT_INTERVAL: 1
+          HTTP_HOST: 127.0.0.1
+          HTTP_PORT: 18090
+        run: |
+          python heartbeat.py >/tmp/heartbeat.log 2>&1 &
+          pid=$!
+          trap 'kill $pid' EXIT
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          import paho.mqtt.client as mqtt
+
+          seen = []
+
+          def on_message(_client, _userdata, message):
+              seen.append(message.payload)
+
+          client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+          client.on_message = on_message
+          client.connect("127.0.0.1", 1883, keepalive=10)
+          client.subscribe("home/gateway/status", qos=1)
+          client.loop_start()
+          try:
+              for _ in range(30):
+                  if seen:
+                      payload = json.loads(seen[0].decode("utf-8"))
+                      if payload.get("status") == "ONLINE":
+                          break
+                  time.sleep(0.2)
+              else:
+                  raise SystemExit("no gateway heartbeat on home/gateway/status")
+              with urllib.request.urlopen("http://127.0.0.1:18090/candidates", timeout=2) as response:
+                  body = json.loads(response.read().decode("utf-8"))
+              if body.get("state") != "idle":
+                  raise SystemExit(f"pairing not idle: {body}")
+          finally:
+              client.loop_stop()
+              client.disconnect()
+          PY
+          cat /tmp/heartbeat.log

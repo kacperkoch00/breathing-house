@@ -50,6 +50,62 @@ class SensorServiceTest {
     }
 
     @Test
+    void pairInsertsUnknownSensor() {
+        SensorSummary created = new SensorSummary("air-11", "air-11", List.of(), null);
+        when(sensorRepository.findById("air-11")).thenReturn(Optional.empty(), Optional.of(created));
+        when(sensorRepository.insertIgnore("air-11", "air-11", NOW)).thenReturn(1);
+
+        PairResult result = service.pair("air-11", null);
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.sensor()).isEqualTo(created);
+    }
+
+    @Test
+    void pairIsIdempotentAndDoesNotOverwriteDisplayName() {
+        SensorSummary existing = new SensorSummary("air-11", "Kitchen", List.of("AIR"), null);
+        when(sensorRepository.findById("air-11")).thenReturn(Optional.of(existing));
+
+        PairResult result = service.pair("air-11", "Kitchen air");
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.sensor().displayName()).isEqualTo("Kitchen");
+        verify(sensorRepository, never()).insertIgnore(any(), any(), any());
+    }
+
+    @Test
+    void unpairDeletesKnownSensor() {
+        when(sensorRepository.lockCurrentRoom("air-1")).thenReturn(Optional.of(Optional.empty()));
+        when(sensorRepository.delete("air-1")).thenReturn(1);
+
+        service.unpair("air-1");
+
+        verify(sensorRepository).delete("air-1");
+        verifyNoInteractions(alertHandler);
+    }
+
+    @Test
+    void unpairAssignedSensorResolvesAlertsThenDeletes() {
+        when(sensorRepository.lockCurrentRoom("air-1")).thenReturn(Optional.of(Optional.of("room-a")));
+        when(sensorRepository.delete("air-1")).thenReturn(1);
+
+        service.unpair("air-1");
+
+        InOrder order = inOrder(alertHandler, sensorRepository);
+        order.verify(alertHandler).onSensorLeftRoom("air-1", "room-a", null);
+        order.verify(sensorRepository).delete("air-1");
+    }
+
+    @Test
+    void unpairUnknownSensorIsNotFound() {
+        when(sensorRepository.lockCurrentRoom("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.unpair("ghost"))
+                .isInstanceOf(SensorNotFoundException.class);
+        verify(sensorRepository, never()).delete(anyString());
+    }
+
+    @Test
     void renameUpdatesDisplayNameAndReturnsSensor() {
         SensorSummary renamed = new SensorSummary("air-1", "Kitchen", List.of("AIR"), null);
         when(sensorRepository.updateDisplayName("air-1", "Kitchen", NOW)).thenReturn(1);

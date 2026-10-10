@@ -118,6 +118,21 @@ export function listSensors(): Promise<SensorsResponse> {
   return fetchJson<SensorsResponse>('/api/v1/sensors')
 }
 
+export function pairSensor(sensorId: string, displayName?: string): Promise<SensorSummary> {
+  return fetchJson<SensorSummary>('/api/v1/sensors', {
+    method: 'POST',
+    body: displayName == null ? { sensorId } : { sensorId, displayName },
+  })
+}
+
+export async function unpairSensor(sensorId: string): Promise<void> {
+  const path = `/api/v1/sensors/${encodeURIComponent(sensorId)}`
+  const response = await fetch(`${getHomeApiBaseUrl()}${path}`, { method: 'DELETE' })
+  if (!response.ok) {
+    throw new HomeApiError(response.status, path, await readErrorMessage(response))
+  }
+}
+
 export function getSensor(sensorId: string): Promise<SensorSummary> {
   return fetchJson<SensorSummary>(`/api/v1/sensors/${encodeURIComponent(sensorId)}`)
 }

@@ -30,6 +30,7 @@ cp .env.example .env
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `VITE_HOME_API_BASE_URL` | _(empty — relative `/api`)_ | Optional absolute base URL for `home-api` (no trailing slash) |
+| `VITE_GATEWAY_BASE_URL` | `http://breathinghouse.local:8090` | Pi pairing HTTP API used by Scan / Add |
 
 `home-api` CORS still allows `http://localhost:5173` and
 `http://home-dashboard.local` for direct cross-origin use, but the dashboard

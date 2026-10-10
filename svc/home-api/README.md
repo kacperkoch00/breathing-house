@@ -122,7 +122,7 @@ advancing the offset.
 | Concept | Identifier | Presentation | Notes |
 |---|---|---|---|
 | Room | `roomId` (server-generated UUID, immutable) | `name`, `description` | Created explicitly through the API. Never deleted. |
-| Sensor | `sensorId` (reported by the device, immutable) | `displayName` (defaults to `sensorId`) | Discovered automatically when it sends data. Cannot be created through the API. |
+| Sensor | `sensorId` (reported by the device, immutable) | `displayName` (defaults to `sensorId`) | Paired through the API, or registered automatically when it sends data. |
 
 Rules:
 
@@ -173,19 +173,29 @@ empty patch and returns `400`.
 curl http://localhost:8082/api/v1/sensors
 # {"sensors":[{"sensorId":"air-1","displayName":"air-1","types":["AIR"],"roomId":null}]}
 
+# Pair (201). Already paired returns 200 and does not change displayName.
+curl -X POST http://localhost:8082/api/v1/sensors \
+  -H 'Content-Type: application/json' \
+  -d '{"sensorId":"air-11"}'
+
 curl http://localhost:8082/api/v1/sensors/air-1
 
 curl -X PATCH http://localhost:8082/api/v1/sensors/air-1 \
   -H 'Content-Type: application/json' \
   -d '{"displayName":"Kitchen air"}'
+
+# Unpair (204). History is kept.
+curl -X DELETE http://localhost:8082/api/v1/sensors/air-11
 ```
 
 - `types` lists the distinct kinds of data seen for the sensor in history
   (`ROOM`, `AIR` from environment readings; `OPENING`, `PRESENCE` from occupancy
   events), sorted alphabetically. A sensor that has not produced history yet
   has an empty list.
-- `displayName` is trimmed, nonblank, at most 100 characters; duplicates are
-  allowed. Only discovered sensors can be renamed; unknown IDs return `404`.
+- `sensorId` is trimmed, nonblank, at most 200 characters. `displayName` is
+  trimmed, nonblank, at most 100 characters; duplicates are allowed. Unknown
+  IDs return `404`.
+- Unpairing a sensor assigned to a room resolves its alerts for that room.
 
 ### Assigning sensors to rooms
 

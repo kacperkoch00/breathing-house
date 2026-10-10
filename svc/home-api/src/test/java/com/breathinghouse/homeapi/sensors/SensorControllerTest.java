@@ -20,6 +20,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -28,6 +29,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -58,6 +60,65 @@ class SensorControllerTest {
                 .andExpect(jsonPath("$.sensors[0].roomId").value("room-a"))
                 .andExpect(jsonPath("$.sensors[1].types", hasSize(2)))
                 .andExpect(jsonPath("$.sensors[1].roomId").value(nullValue()));
+    }
+
+    @Test
+    void postPairsNewSensorWith201() throws Exception {
+        when(sensorService.pair("air-11", null))
+                .thenReturn(new PairResult(new SensorSummary("air-11", "air-11", List.of(), null), true));
+
+        mockMvc.perform(post("/api/v1/sensors")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sensorId\":\"  air-11 \"}"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Location", "/api/v1/sensors/air-11"))
+                .andExpect(jsonPath("$.sensorId").value("air-11"))
+                .andExpect(jsonPath("$.roomId").value(nullValue()));
+    }
+
+    @Test
+    void postPairExistingSensorReturns200() throws Exception {
+        when(sensorService.pair("air-11", "Kitchen"))
+                .thenReturn(new PairResult(new SensorSummary("air-11", "Kitchen", List.of(), null), false));
+
+        mockMvc.perform(post("/api/v1/sensors")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sensorId\":\"air-11\",\"displayName\":\"Kitchen\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.displayName").value("Kitchen"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{}",
+            "{\"sensorId\":null}",
+            "{\"sensorId\":\"   \"}",
+            "{\"sensorId\":123}"
+    })
+    void postPairRejectsInvalidBodies(String body) throws Exception {
+        mockMvc.perform(post("/api/v1/sensors")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("bad_request"));
+
+        verify(sensorService, never()).pair(any(), any());
+    }
+
+    @Test
+    void deleteUnpairsSensor() throws Exception {
+        mockMvc.perform(delete("/api/v1/sensors/air-11"))
+                .andExpect(status().isNoContent());
+        verify(sensorService).unpair("air-11");
+    }
+
+    @Test
+    void deleteUnpairUnknownSensorReturns404() throws Exception {
+        doThrow(new SensorNotFoundException("ghost")).when(sensorService).unpair("ghost");
+
+        mockMvc.perform(delete("/api/v1/sensors/ghost"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
     }
 
     @Test
@@ -194,11 +255,13 @@ class SensorControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"PUT", "DELETE", "PATCH", "GET"})
+    @ValueSource(strings = {"PUT", "DELETE", "PATCH", "GET", "POST"})
     void corsPreflightAllowsMutationMethodsOnSensorPaths(String method) throws Exception {
-        String path = method.equals("PATCH") || method.equals("GET")
-                ? "/api/v1/sensors/air-1"
-                : "/api/v1/rooms/room-b/sensors/air-1";
+        String path = switch (method) {
+            case "PATCH", "GET" -> "/api/v1/sensors/air-1";
+            case "POST" -> "/api/v1/sensors";
+            default -> "/api/v1/rooms/room-b/sensors/air-1";
+        };
 
         mockMvc.perform(options(path)
                         .header("Origin", "http://home-dashboard.local")

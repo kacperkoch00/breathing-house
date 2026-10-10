@@ -85,6 +85,24 @@ class SensorRepositoryTest {
     }
 
     @Test
+    void insertIgnorePairsNewSensorAndLeavesExistingName() {
+        assertThat(repository.insertIgnore("air-11", "air-11", NOW)).isEqualTo(1);
+        assertThat(repository.insertIgnore("air-11", "Other", NOW)).isZero();
+        assertThat(repository.findById("air-11"))
+                .get()
+                .extracting(SensorSummary::displayName)
+                .isEqualTo("air-11");
+    }
+
+    @Test
+    void deleteRemovesPairedSensor() {
+        insertSensor("air-11", "air-11", null);
+        assertThat(repository.delete("air-11")).isEqualTo(1);
+        assertThat(repository.findById("air-11")).isEmpty();
+        assertThat(repository.delete("air-11")).isZero();
+    }
+
+    @Test
     void updateDisplayNameChangesNameAndUpdatedAtOnly() {
         insertRoom("room-a");
         insertSensor("air-1", "air-1", "room-a");

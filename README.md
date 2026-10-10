@@ -11,6 +11,7 @@ svc/                         Service source code
   home-api/                  Frontend-facing API/BFF for room history and alerts
   home-dashboard/            Static Vite/React start page
   sensors-data-collector/    MQTT → Kafka collector
+  gateway/                   Raspberry Pi MQTT broker setup
 deploy/helm/                 One Helm chart per deployable service (+ mqtt-broker)
 deploy/k8s/                  Plain Kubernetes manifests (Kafka, Postgres)
 deploy/observability/        Loki, Alloy, Prometheus, and Grafana Helm values
@@ -28,7 +29,7 @@ Local Postgres (Minikube only): ClusterIP service `postgres:5432`, database `bre
 
 ## Domain model (sensors and rooms)
 
-- Physical sensors emit an immutable `sensorId`. Users may rename sensors (`displayName`), create rooms, and assign each sensor to at most one room.
+- Physical sensors emit an immutable `sensorId`. Users may pair or unpair them, rename sensors (`displayName`), create rooms, and assign each sensor to at most one room.
 - Rooms are first-class entities (`roomId` is a server-generated UUID for new rooms). Room `name` need not be unique.
 - Every reading/event stores the room assignment that existed at ingest time. Moving a sensor does not rewrite history.
 - See [docs/architecture/message-flow.md](docs/architecture/message-flow.md) for MQTT/Kafka envelopes, schema versions, and identifiers.

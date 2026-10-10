@@ -140,6 +140,42 @@ class SensorServiceIntegrationTest {
     }
 
     @Test
+    void pairAddsSensorToTheKnownListAndIsIdempotent() {
+        PairResult created = sensorService.pair("air-11", null);
+        assertThat(created.created()).isTrue();
+        assertThat(created.sensor().sensorId()).isEqualTo("air-11");
+        assertThat(created.sensor().displayName()).isEqualTo("air-11");
+        assertThat(created.sensor().roomId()).isNull();
+        assertThat(sensorService.listSensors()).extracting(SensorSummary::sensorId)
+                .contains("air-1", "air-11");
+
+        sensorService.rename("air-11", "Kitchen air");
+        PairResult again = sensorService.pair("air-11", "Other name");
+        assertThat(again.created()).isFalse();
+        assertThat(again.sensor().displayName()).isEqualTo("Kitchen air");
+    }
+
+    @Test
+    void unpairRemovesSensorAndKeepsHistory() {
+        sensorService.assign("room-a", "air-1");
+        insertReading("room-a", "air-1", 700.0, T1);
+
+        sensorService.unpair("air-1");
+
+        assertThatThrownBy(() -> sensorService.getSensor("air-1"))
+                .isInstanceOf(SensorNotFoundException.class);
+        assertThat(sensorService.listSensors()).isEmpty();
+        assertThat(co2In("room-a")).containsExactly(700.0);
+        verify(alertHandler).onSensorLeftRoom("air-1", "room-a", null);
+    }
+
+    @Test
+    void unpairUnknownSensorIsNotFound() {
+        assertThatThrownBy(() -> sensorService.unpair("ghost"))
+                .isInstanceOf(SensorNotFoundException.class);
+    }
+
+    @Test
     void renameUnknownSensorIsNotFound() {
         assertThatThrownBy(() -> sensorService.rename("ghost", "x"))
                 .isInstanceOf(SensorNotFoundException.class);

@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   getSensor,
   HomeApiError,
   listEnvironmentReadings,
   listOccupancyEvents,
   listRooms,
+  unpairSensor,
 } from './api/homeApi'
 import type {
   EnvironmentReading,
@@ -29,7 +30,7 @@ import {
 } from './roomDetail'
 import { formatLocalClock, formatUpdatedLabel, roomNameMap } from './overview'
 import {
-  primarySensorKind,
+  resolveSensorKind,
   sensorIconToneClass,
   sensorKindBadgeClass,
   sensorKindLabel,
@@ -68,14 +69,16 @@ function pickChartMetric(history: EnvironmentReading[]): MetricKey {
 }
 
 function roomSectionPath(sensor: SensorSummary): string {
-  const kind = primarySensorKind(sensor.types)
+  const kind = resolveSensorKind(sensor.types, sensor.sensorId)
   if (kind === 'PRESENCE' || kind === 'OPENING') return 'activity'
   return 'air'
 }
 
 export function SensorDetailPage() {
   const { sensorId = '' } = useParams<{ sensorId: string }>()
+  const navigate = useNavigate()
   const [state, setState] = useState<DetailState>(initialState)
+  const [unpairing, setUnpairing] = useState(false)
 
   const loadDetail = useCallback(
     async (isRefresh: boolean) => {
@@ -144,12 +147,31 @@ export function SensorDetailPage() {
     enabled: Boolean(sensorId),
   })
 
+  const handleUnpair = async () => {
+    const label = state.sensor?.displayName ?? sensorId
+    const confirmed = window.confirm(
+      `Remove “${label}” from known devices?\n\nHistory is kept. The board can be paired again later.`,
+    )
+    if (!confirmed) return
+    setUnpairing(true)
+    try {
+      await unpairSensor(sensorId)
+      navigate('/sensors')
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        errorMessage: error instanceof Error ? error.message : 'Failed to unpair sensor',
+      }))
+    } finally {
+      setUnpairing(false)
+    }
+  }
+
   const roomLabels = useMemo(() => roomNameMap(state.rooms), [state.rooms])
   const sensor = state.sensor
-  const kind = sensor ? primarySensorKind(sensor.types) : null
-  const isEnv = sensor?.types.some((type) => type === 'AIR' || type === 'ROOM') ?? false
-  const isActivity =
-    sensor?.types.some((type) => type === 'PRESENCE' || type === 'OPENING') ?? false
+  const kind = sensor ? resolveSensorKind(sensor.types, sensor.sensorId) : null
+  const isEnv = kind === 'AIR' || kind === 'ROOM'
+  const isActivity = kind === 'PRESENCE' || kind === 'OPENING'
   const chartMetric = pickChartMetric(state.history)
   const chartPoints = metricSeries(state.history, chartMetric)
   const chartStats = seriesStats(chartPoints)
@@ -219,6 +241,15 @@ export function SensorDetailPage() {
               <p className="text-primary font-mono text-[11px] tracking-[0.16em] uppercase">
                 Sensor
               </p>
+              <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => void handleUnpair()}
+                disabled={unpairing}
+              >
+                {unpairing ? 'Removing' : 'Unpair'}
+              </button>
               <button
                 type="button"
                 className="btn btn-sm btn-outline"
@@ -235,6 +266,7 @@ export function SensorDetailPage() {
                   'Refresh'
                 )}
               </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-start gap-4">

@@ -38,6 +38,24 @@ public class SensorService {
     }
 
     @Transactional
+    public PairResult pair(String sensorId, String displayName) {
+        return sensorRepository.findById(sensorId)
+                .map(existing -> new PairResult(existing, false))
+                .orElseGet(() -> {
+                    String name = displayName == null ? sensorId : displayName;
+                    boolean created = sensorRepository.insertIgnore(sensorId, name, clock.instant()) > 0;
+                    return new PairResult(getSensor(sensorId), created);
+                });
+    }
+
+    @Transactional
+    public void unpair(String sensorId) {
+        Optional<String> roomId = requireCurrentRoom(sensorId);
+        roomId.ifPresent(previous -> alertHandler.onSensorLeftRoom(sensorId, previous, null));
+        sensorRepository.delete(sensorId);
+    }
+
+    @Transactional
     public SensorSummary rename(String sensorId, String displayName) {
         if (sensorRepository.updateDisplayName(sensorId, displayName, clock.instant()) == 0) {
             throw new SensorNotFoundException(sensorId);

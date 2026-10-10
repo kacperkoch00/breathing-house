@@ -1,0 +1,8 @@
+# Native Windows Python 3.12+ only (not WSL). Used by simulate-air-sensor-windows.py
+paho-mqtt>=1.6,<3
+winrt-runtime>=3.1
+winrt-Windows.Devices.Bluetooth>=3.1
+winrt-Windows.Devices.Bluetooth.Advertisement>=3.1
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.1
+winrt-Windows.Foundation>=3.1
+winrt-Windows.Storage.Streams>=3.1
