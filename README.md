@@ -1,6 +1,58 @@
 # Breathing House
 
-Breathing House contains the services and deployment assets for the home environment monitoring system.
+Local environment and occupancy monitoring for a house. Sensors stay on a
+Raspberry Pi; they never join house Wi-Fi. The cluster stores history and
+evaluates alerts.
+
+- **Edge:** BLE pair on the Pi, then MQTT through a MAC-allowlisted Mosquitto
+- **Ingest:** `sensors-data-collector` lifts MQTT into Kafka (schema v2)
+- **Store:** `environment-monitor` and `occupancy-monitor` persist to Postgres
+- **App:** `home-api` + `home-dashboard` for rooms, pairing, history, and alerts
+
+## Architecture
+
+Sensors pair over BLE to the Pi (`:8090`), then publish MQTT (`:1883`). The
+collector writes Kafka; monitors snapshot the current room into Postgres. The
+browser uses `home-api` for data and the Pi only for Scan / Accept.
+
+```mermaid
+flowchart LR
+  subgraph home["Home LAN"]
+    sensors["Sensors<br/>air · room · opening · presence"]
+    pi["Raspberry Pi<br/>pairing :8090 · MQTT :1883"]
+    browser["Browser"]
+  end
+
+  subgraph cluster["Kubernetes"]
+    collector["sensors-data-collector"]
+    kafka["Kafka"]
+    monitors["environment-monitor<br/>occupancy-monitor"]
+    db[("Postgres")]
+    api["home-api"]
+    ui["home-dashboard"]
+  end
+
+  sensors -->|"1 BLE pair"| pi
+  sensors -->|"2 MQTT"| pi
+  browser -->|"Scan / Accept"| pi
+  pi -->|"3 MQTT LAN"| collector
+  collector --> kafka
+  kafka --> monitors
+  monitors --> db
+  api --> db
+  browser -->|"4 REST"| api
+  browser --> ui
+```
+
+## Quick start
+
+```bash
+./scripts/setup-desktop.sh
+```
+
+Then open the dashboard via Ingress (`home-dashboard.local`). Pairing and the
+live MQTT broker run on the Pi, not in the cluster. Full install options are
+below.
 
 ## Repository layout
 
